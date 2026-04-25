@@ -1,0 +1,21 @@
+{
+  "name": "charting-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "High-performance financial charting engine scaffold.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:visual": "playwright test",
+    "build": "tsup src/index.ts --format esm,cjs --dts",
+    "playground": "npm run build && node scripts/playground-server.mjs",
+    "playground:serve": "node scripts/playground-server.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "tsup": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
