@@ -42,6 +42,7 @@ export interface CandlestickData {
 
 export interface CandlestickSeriesApi {
   setData(data: CandlestickData[]): void;
+  update(data: CandlestickData): void;
 }
 
 export interface TimeScaleApi {

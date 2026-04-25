@@ -18,7 +18,10 @@ import {
   type PriceScaleTick,
 } from "../../rendering/renderers/price-scale-renderer";
 import { renderTimeScale } from "../../rendering/renderers/time-scale-renderer";
-import { createCandleBuffer } from "../../data/adapters/candle-data-adapter";
+import {
+  createCandleBuffer,
+  updateCandleBuffer,
+} from "../../data/adapters/candle-data-adapter";
 import type {
   CandlestickData,
   CandlestickSeriesOptions,
@@ -127,6 +130,34 @@ export class ChartModel {
 
     series.buffer = createCandleBuffer(data);
     this.fitContent();
+    this.render();
+  }
+
+  updateSeriesData(seriesId: number, data: CandlestickData): void {
+    const series = this.series.get(seriesId);
+
+    if (!series) {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+
+    const previousLength = series.buffer.length;
+    const wasFollowingLatest = this.timeScaleModel.isRightEdgeVisible(previousLength);
+    const lastTimestamp =
+      previousLength > 0 ? series.buffer.time[previousLength - 1] : undefined;
+
+    series.buffer = updateCandleBuffer(series.buffer, data);
+
+    if (previousLength === 0) {
+      this.fitContent();
+    } else if (series.buffer.length > previousLength && wasFollowingLatest) {
+      this.timeScaleModel.pan(series.buffer.length, 1);
+    }
+
+    if (lastTimestamp === undefined || data.time !== lastTimestamp) {
+      this.render();
+      return;
+    }
+
     this.render();
   }
 

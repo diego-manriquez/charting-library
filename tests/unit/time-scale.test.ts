@@ -36,4 +36,15 @@ describe("TimeScaleModel", () => {
 
     expect(timeScale.getVisibleRange(100)).toEqual({ from: 35, to: 84 });
   });
+
+  it("detects when the right edge is visible", () => {
+    const timeScale = new TimeScaleModel();
+
+    timeScale.fitContent(30);
+    expect(timeScale.isRightEdgeVisible(30)).toBe(true);
+
+    timeScale.zoom(30, 0.5, 0.5);
+    timeScale.pan(30, -3);
+    expect(timeScale.isRightEdgeVisible(30)).toBe(false);
+  });
 });

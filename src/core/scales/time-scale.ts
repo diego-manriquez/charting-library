@@ -72,6 +72,15 @@ export class TimeScaleModel {
       to: from + span - 1,
     };
   }
+
+  isRightEdgeVisible(length: number): boolean {
+    if (length <= 0) {
+      return true;
+    }
+
+    const visibleRange = this.getVisibleRange(length);
+    return visibleRange.to >= length - 1;
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -36,6 +36,7 @@ interface CandlestickData {
 }
 interface CandlestickSeriesApi {
     setData(data: CandlestickData[]): void;
+    update(data: CandlestickData): void;
 }
 interface TimeScaleApi {
     fitContent(): void;

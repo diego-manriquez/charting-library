@@ -18,6 +18,10 @@ class CandlestickSeriesApiImpl implements CandlestickSeriesApi {
   setData(data: CandlestickData[]): void {
     this.chartModel.setSeriesData(this.seriesId, data);
   }
+
+  update(data: CandlestickData): void {
+    this.chartModel.updateSeriesData(this.seriesId, data);
+  }
 }
 
 class TimeScaleApiImpl implements TimeScaleApi {

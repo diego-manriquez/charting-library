@@ -23,9 +23,29 @@ const candles = chart.addSeries("candlestick", {
   wickDownColor: "#fb7185",
 });
 
-candles.setData(generateCandles(120));
+const initialCandles = generateCandles(120);
+
+candles.setData(initialCandles);
 chart.timeScale().fitContent();
 chart.resize(container.clientWidth, container.clientHeight);
+
+let liveIndex = 120;
+let liveCandle = generateNextCandle();
+let phase = 0;
+
+setInterval(() => {
+  if (phase < 3) {
+    liveCandle = evolveCandle(liveCandle);
+    candles.update(liveCandle);
+    phase += 1;
+    return;
+  }
+
+  candles.update(liveCandle);
+  liveIndex += 1;
+  liveCandle = generateNextCandle();
+  phase = 0;
+}, 900);
 
 window.addEventListener("resize", () => {
   chart.resize(container.clientWidth, container.clientHeight);
@@ -57,6 +77,40 @@ function generateCandles(length) {
   }
 
   return candlesData;
+}
+
+function generateNextCandle() {
+  const previous = liveIndex === 120 ? initialCandles.at(-1) : liveCandle;
+  const open = previous ? previous.close : 100;
+  const drift = Math.sin(liveIndex / 8) * 2;
+  const close = open + drift + randomBetween(-2.5, 2.5);
+  const high = Math.max(open, close) + randomBetween(0.4, 3);
+  const low = Math.min(open, close) - randomBetween(0.4, 3);
+  const startTime = Date.UTC(2024, 0, 1);
+  const oneDay = 24 * 60 * 60 * 1000;
+
+  return {
+    time: startTime + liveIndex * oneDay,
+    open: round(open),
+    high: round(high),
+    low: round(low),
+    close: round(close),
+    volume: Math.round(randomBetween(1000, 5000)),
+  };
+}
+
+function evolveCandle(candle) {
+  const close = candle.close + randomBetween(-1.25, 1.25);
+  const high = Math.max(candle.open, close, candle.high);
+  const low = Math.min(candle.open, close, candle.low);
+
+  return {
+    ...candle,
+    high: round(high),
+    low: round(low),
+    close: round(close),
+    volume: candle.volume + Math.round(randomBetween(100, 500)),
+  };
 }
 
 function randomBetween(min, max) {

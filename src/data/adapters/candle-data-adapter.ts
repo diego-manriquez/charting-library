@@ -40,6 +40,106 @@ export function createCandleBuffer(data: CandlestickData[]): CandleBuffer {
   };
 }
 
+export function updateCandleBuffer(
+  buffer: CandleBuffer,
+  data: CandlestickData,
+): CandleBuffer {
+  const timestamp = normalizeTimestamp(data.time);
+
+  validateCandle(data, buffer.length, timestamp);
+
+  if (buffer.length === 0) {
+    return createCandleBuffer([data]);
+  }
+
+  const lastIndex = buffer.length - 1;
+  const lastTimestamp = buffer.time[lastIndex];
+
+  if (lastTimestamp === undefined) {
+    throw new Error("Missing last candle timestamp.");
+  }
+
+  if (timestamp < lastTimestamp) {
+    throw new Error("New candle time must be >= the last candle time.");
+  }
+
+  if (timestamp === lastTimestamp) {
+    return replaceLastCandle(buffer, timestamp, data);
+  }
+
+  return appendCandle(buffer, timestamp, data);
+}
+
+function replaceLastCandle(
+  buffer: CandleBuffer,
+  timestamp: number,
+  data: CandlestickData,
+): CandleBuffer {
+  const nextBuffer = cloneBuffer(buffer);
+  const lastIndex = nextBuffer.length - 1;
+
+  nextBuffer.time[lastIndex] = timestamp;
+  nextBuffer.open[lastIndex] = data.open;
+  nextBuffer.high[lastIndex] = data.high;
+  nextBuffer.low[lastIndex] = data.low;
+  nextBuffer.close[lastIndex] = data.close;
+  nextBuffer.volume[lastIndex] = data.volume ?? 0;
+
+  return nextBuffer;
+}
+
+function appendCandle(
+  buffer: CandleBuffer,
+  timestamp: number,
+  data: CandlestickData,
+): CandleBuffer {
+  const nextLength = buffer.length + 1;
+  const nextBuffer = {
+    time: copyWithExpandedCapacity(buffer.time, nextLength),
+    open: copyWithExpandedCapacity(buffer.open, nextLength),
+    high: copyWithExpandedCapacity(buffer.high, nextLength),
+    low: copyWithExpandedCapacity(buffer.low, nextLength),
+    close: copyWithExpandedCapacity(buffer.close, nextLength),
+    volume: copyWithExpandedCapacity(buffer.volume, nextLength),
+    length: nextLength,
+  };
+  const lastIndex = nextLength - 1;
+
+  nextBuffer.time[lastIndex] = timestamp;
+  nextBuffer.open[lastIndex] = data.open;
+  nextBuffer.high[lastIndex] = data.high;
+  nextBuffer.low[lastIndex] = data.low;
+  nextBuffer.close[lastIndex] = data.close;
+  nextBuffer.volume[lastIndex] = data.volume ?? 0;
+
+  return nextBuffer;
+}
+
+function cloneBuffer(buffer: CandleBuffer): CandleBuffer {
+  return {
+    time: buffer.time.slice(),
+    open: buffer.open.slice(),
+    high: buffer.high.slice(),
+    low: buffer.low.slice(),
+    close: buffer.close.slice(),
+    volume: buffer.volume.slice(),
+    length: buffer.length,
+  };
+}
+
+function copyWithExpandedCapacity(
+  source: Float64Array,
+  nextLength: number,
+): Float64Array {
+  const next = new Float64Array(nextLength);
+  next.set(source);
+  return next;
+}
+
+function normalizeTimestamp(time: CandlestickData["time"]): number {
+  return time instanceof Date ? time.getTime() : time;
+}
+
 function validateCandle(
   candle: CandlestickData,
   index: number,

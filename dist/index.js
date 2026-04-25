@@ -116,6 +116,13 @@ var TimeScaleModel = class {
       to: from + span - 1
     };
   }
+  isRightEdgeVisible(length) {
+    if (length <= 0) {
+      return true;
+    }
+    const visibleRange = this.getVisibleRange(length);
+    return visibleRange.to >= length - 1;
+  }
 };
 function clamp(value, min, max) {
   return Math.max(min, Math.min(value, max));
@@ -561,6 +568,75 @@ function createCandleBuffer(data) {
     length
   };
 }
+function updateCandleBuffer(buffer, data) {
+  const timestamp = normalizeTimestamp(data.time);
+  validateCandle(data, buffer.length, timestamp);
+  if (buffer.length === 0) {
+    return createCandleBuffer([data]);
+  }
+  const lastIndex = buffer.length - 1;
+  const lastTimestamp = buffer.time[lastIndex];
+  if (lastTimestamp === void 0) {
+    throw new Error("Missing last candle timestamp.");
+  }
+  if (timestamp < lastTimestamp) {
+    throw new Error("New candle time must be >= the last candle time.");
+  }
+  if (timestamp === lastTimestamp) {
+    return replaceLastCandle(buffer, timestamp, data);
+  }
+  return appendCandle(buffer, timestamp, data);
+}
+function replaceLastCandle(buffer, timestamp, data) {
+  const nextBuffer = cloneBuffer(buffer);
+  const lastIndex = nextBuffer.length - 1;
+  nextBuffer.time[lastIndex] = timestamp;
+  nextBuffer.open[lastIndex] = data.open;
+  nextBuffer.high[lastIndex] = data.high;
+  nextBuffer.low[lastIndex] = data.low;
+  nextBuffer.close[lastIndex] = data.close;
+  nextBuffer.volume[lastIndex] = data.volume ?? 0;
+  return nextBuffer;
+}
+function appendCandle(buffer, timestamp, data) {
+  const nextLength = buffer.length + 1;
+  const nextBuffer = {
+    time: copyWithExpandedCapacity(buffer.time, nextLength),
+    open: copyWithExpandedCapacity(buffer.open, nextLength),
+    high: copyWithExpandedCapacity(buffer.high, nextLength),
+    low: copyWithExpandedCapacity(buffer.low, nextLength),
+    close: copyWithExpandedCapacity(buffer.close, nextLength),
+    volume: copyWithExpandedCapacity(buffer.volume, nextLength),
+    length: nextLength
+  };
+  const lastIndex = nextLength - 1;
+  nextBuffer.time[lastIndex] = timestamp;
+  nextBuffer.open[lastIndex] = data.open;
+  nextBuffer.high[lastIndex] = data.high;
+  nextBuffer.low[lastIndex] = data.low;
+  nextBuffer.close[lastIndex] = data.close;
+  nextBuffer.volume[lastIndex] = data.volume ?? 0;
+  return nextBuffer;
+}
+function cloneBuffer(buffer) {
+  return {
+    time: buffer.time.slice(),
+    open: buffer.open.slice(),
+    high: buffer.high.slice(),
+    low: buffer.low.slice(),
+    close: buffer.close.slice(),
+    volume: buffer.volume.slice(),
+    length: buffer.length
+  };
+}
+function copyWithExpandedCapacity(source, nextLength) {
+  const next = new Float64Array(nextLength);
+  next.set(source);
+  return next;
+}
+function normalizeTimestamp(time) {
+  return time instanceof Date ? time.getTime() : time;
+}
 function validateCandle(candle, index, timestamp) {
   if (!Number.isFinite(timestamp)) {
     throw new Error(`Invalid candle time at index ${index}.`);
@@ -653,6 +729,26 @@ var ChartModel = class {
     }
     series.buffer = createCandleBuffer(data);
     this.fitContent();
+    this.render();
+  }
+  updateSeriesData(seriesId, data) {
+    const series = this.series.get(seriesId);
+    if (!series) {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+    const previousLength = series.buffer.length;
+    const wasFollowingLatest = this.timeScaleModel.isRightEdgeVisible(previousLength);
+    const lastTimestamp = previousLength > 0 ? series.buffer.time[previousLength - 1] : void 0;
+    series.buffer = updateCandleBuffer(series.buffer, data);
+    if (previousLength === 0) {
+      this.fitContent();
+    } else if (series.buffer.length > previousLength && wasFollowingLatest) {
+      this.timeScaleModel.pan(series.buffer.length, 1);
+    }
+    if (lastTimestamp === void 0 || data.time !== lastTimestamp) {
+      this.render();
+      return;
+    }
     this.render();
   }
   fitContent() {
@@ -989,6 +1085,9 @@ var CandlestickSeriesApiImpl = class {
   seriesId;
   setData(data) {
     this.chartModel.setSeriesData(this.seriesId, data);
+  }
+  update(data) {
+    this.chartModel.updateSeriesData(this.seriesId, data);
   }
 };
 var TimeScaleApiImpl = class {
