@@ -1,6 +1,7 @@
 import type { CandleBuffer } from "../../data/buffers/candle-buffer";
 import type { IndexRange } from "../../core/scales/time-scale";
 import type { PlotArea } from "../common/geometry";
+import { formatTimeLabel } from "../common/chart-coordinates";
 
 interface TimeScaleTick {
   x: number;
@@ -88,19 +89,6 @@ export function getTimeScaleTicks(
 
   return dedupeTicks(ticks);
 }
-
-function formatTimeLabel(timestamp: number, visibleCount: number): string {
-  const date = new Date(timestamp);
-  const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getUTCDate()}`.padStart(2, "0");
-
-  if (visibleCount <= 40) {
-    return `${month}-${day}`;
-  }
-
-  return `${date.getUTCFullYear()}-${month}`;
-}
-
 function dedupeTicks(ticks: TimeScaleTick[]): TimeScaleTick[] {
   const deduped: TimeScaleTick[] = [];
   let previousLabel = "";

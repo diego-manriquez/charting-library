@@ -124,6 +124,47 @@ var CanvasLayerManager = class {
   }
 };
 
+// src/rendering/common/chart-coordinates.ts
+function indexToX(index, visibleRange, plotArea) {
+  const visibleCount = Math.max(1, visibleRange.to - visibleRange.from + 1);
+  const candleSpacing = plotArea.width / visibleCount;
+  return plotArea.x + (index - visibleRange.from + 0.5) * candleSpacing;
+}
+function xToIndex(x, visibleRange, plotArea) {
+  const visibleCount = Math.max(1, visibleRange.to - visibleRange.from + 1);
+  const candleSpacing = plotArea.width / visibleCount;
+  const rawIndex = visibleRange.from + (x - plotArea.x) / candleSpacing - 0.5;
+  return clamp(
+    Math.round(rawIndex),
+    visibleRange.from,
+    visibleRange.to
+  );
+}
+function priceToY(price, range, plotArea) {
+  const ratio = (price - range.min) / (range.max - range.min);
+  return plotArea.y + plotArea.height - ratio * plotArea.height;
+}
+function yToPrice(y, range, plotArea) {
+  const clampedY = clamp(y, plotArea.y, plotArea.y + plotArea.height);
+  const ratio = 1 - (clampedY - plotArea.y) / plotArea.height;
+  return range.min + ratio * (range.max - range.min);
+}
+function formatPriceLabel(value) {
+  return value.toFixed(value >= 100 ? 2 : 4).replace(/\.?0+$/, "");
+}
+function formatTimeLabel(timestamp, visibleCount) {
+  const date = new Date(timestamp);
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getUTCDate()}`.padStart(2, "0");
+  if (visibleCount <= 40) {
+    return `${month}-${day}`;
+  }
+  return `${date.getUTCFullYear()}-${month}`;
+}
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(value, max));
+}
+
 // src/rendering/common/geometry.ts
 function getChartLayout(size, padding, scales) {
   const innerWidth = Math.max(0, size.width - padding.left - padding.right);
@@ -152,6 +193,91 @@ function getChartLayout(size, padding, scales) {
       height: timeScaleHeight
     }
   };
+}
+
+// src/rendering/renderers/crosshair-renderer.ts
+function renderCrosshair(params) {
+  const {
+    context,
+    plotArea,
+    priceScaleArea,
+    timeScaleArea,
+    state,
+    lineColor,
+    textColor,
+    accentColor
+  } = params;
+  context.save();
+  context.strokeStyle = lineColor;
+  context.lineWidth = 1;
+  context.setLineDash([4, 4]);
+  context.beginPath();
+  context.moveTo(state.x, plotArea.y);
+  context.lineTo(state.x, plotArea.y + plotArea.height);
+  context.moveTo(plotArea.x, state.y);
+  context.lineTo(plotArea.x + plotArea.width, state.y);
+  context.stroke();
+  context.setLineDash([]);
+  drawAxisLabel({
+    context,
+    area: priceScaleArea,
+    centerX: priceScaleArea.x + priceScaleArea.width / 2,
+    centerY: state.y,
+    text: state.priceLabel,
+    textColor,
+    backgroundColor: accentColor,
+    horizontal: true
+  });
+  drawAxisLabel({
+    context,
+    area: timeScaleArea,
+    centerX: state.x,
+    centerY: timeScaleArea.y + timeScaleArea.height / 2,
+    text: state.timeLabel,
+    textColor,
+    backgroundColor: accentColor,
+    horizontal: false
+  });
+  context.restore();
+}
+function drawAxisLabel(params) {
+  const {
+    context,
+    area,
+    centerX,
+    centerY,
+    text,
+    textColor,
+    backgroundColor,
+    horizontal
+  } = params;
+  const paddingX = 8;
+  const paddingY = 4;
+  context.font = "12px ui-sans-serif, system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const textWidth = context.measureText(text).width;
+  const labelWidth = Math.min(area.width - 8, textWidth + paddingX * 2);
+  const labelHeight = horizontal ? 20 : Math.min(area.height - 8, 20);
+  const clampedCenterX = clamp2(
+    centerX,
+    area.x + labelWidth / 2 + 4,
+    area.x + area.width - labelWidth / 2 - 4
+  );
+  const clampedCenterY = clamp2(
+    centerY,
+    area.y + labelHeight / 2 + 4,
+    area.y + area.height - labelHeight / 2 - 4
+  );
+  const labelX = clampedCenterX - labelWidth / 2;
+  const labelY = clampedCenterY - labelHeight / 2;
+  context.fillStyle = backgroundColor;
+  context.fillRect(labelX, labelY, labelWidth, labelHeight);
+  context.fillStyle = textColor;
+  context.fillText(text, clampedCenterX, clampedCenterY);
+}
+function clamp2(value, min, max) {
+  return Math.max(min, Math.min(value, max));
 }
 
 // src/rendering/renderers/candlestick-renderer.ts
@@ -188,7 +314,7 @@ function renderCandlesticks(params) {
     const low = getBufferValue(buffer.low, index);
     const close = getBufferValue(buffer.close, index);
     const isUp = close >= open;
-    const x = plotArea.x + (index - visibleRange.from + 0.5) * candleSpacing;
+    const x = indexToX(index, visibleRange, plotArea);
     const highY = priceToY(high, priceRange, plotArea);
     const lowY = priceToY(low, priceRange, plotArea);
     const openY = priceToY(open, priceRange, plotArea);
@@ -203,10 +329,6 @@ function renderCandlesticks(params) {
     context.fillStyle = isUp ? options.upColor : options.downColor;
     context.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
   }
-}
-function priceToY(price, range, plotArea) {
-  const ratio = (price - range.min) / (range.max - range.min);
-  return plotArea.y + plotArea.height - ratio * plotArea.height;
 }
 function getBufferValue(buffer, index) {
   const value = buffer[index];
@@ -260,9 +382,6 @@ function getPriceScaleTicks(priceRange, area, tickCount) {
     });
   }
   return ticks;
-}
-function formatPriceLabel(value) {
-  return value.toFixed(value >= 100 ? 2 : 4).replace(/\.?0+$/, "");
 }
 
 // src/rendering/renderers/time-scale-renderer.ts
@@ -320,15 +439,6 @@ function getTimeScaleTicks(buffer, visibleRange, plotArea, tickCount) {
     });
   }
   return dedupeTicks(ticks);
-}
-function formatTimeLabel(timestamp, visibleCount) {
-  const date = new Date(timestamp);
-  const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getUTCDate()}`.padStart(2, "0");
-  if (visibleCount <= 40) {
-    return `${month}-${day}`;
-  }
-  return `${date.getUTCFullYear()}-${month}`;
 }
 function dedupeTicks(ticks) {
   const deduped = [];
@@ -392,6 +502,8 @@ function validateCandle(candle, index, timestamp) {
 var PRICE_SCALE_WIDTH = 72;
 var TIME_SCALE_HEIGHT = 28;
 var AXIS_BACKGROUND = "#0f172a";
+var CROSSHAIR_LINE_COLOR = "rgba(226, 232, 240, 0.65)";
+var CROSSHAIR_LABEL_COLOR = "#1d4ed8";
 var ChartModel = class {
   constructor(container, options) {
     this.container = container;
@@ -400,6 +512,7 @@ var ChartModel = class {
     this.size = this.resolveInitialSize();
     this.applyContainerStyles();
     this.layerManager.resize(this.size);
+    this.bindPointerEvents();
     this.bindContainerResize();
     this.render();
   }
@@ -411,7 +524,18 @@ var ChartModel = class {
   series = /* @__PURE__ */ new Map();
   nextSeriesId = 1;
   size;
+  crosshair;
   resizeObserver;
+  handlePointerMove = (event) => {
+    this.updateCrosshair(event);
+  };
+  handlePointerLeave = () => {
+    if (!this.crosshair) {
+      return;
+    }
+    this.crosshair = void 0;
+    this.render();
+  };
   addCandlestickSeries(options) {
     const id = this.nextSeriesId;
     this.nextSeriesId += 1;
@@ -497,9 +621,22 @@ var ChartModel = class {
       backgroundColor: AXIS_BACKGROUND,
       tickCount: this.options.grid.verticalLines + 1
     });
+    if (this.crosshair) {
+      renderCrosshair({
+        context,
+        plotArea,
+        priceScaleArea: layout.priceScaleArea,
+        timeScaleArea: layout.timeScaleArea,
+        state: this.crosshair,
+        lineColor: CROSSHAIR_LINE_COLOR,
+        textColor: "#eff6ff",
+        accentColor: CROSSHAIR_LABEL_COLOR
+      });
+    }
   }
   dispose() {
     this.resizeObserver?.disconnect();
+    this.unbindPointerEvents();
     this.series.clear();
     this.layerManager.dispose();
   }
@@ -552,6 +689,64 @@ var ChartModel = class {
       }
       this.resize(nextSize.width, nextSize.height);
     });
+  }
+  bindPointerEvents() {
+    this.container.addEventListener("pointermove", this.handlePointerMove);
+    this.container.addEventListener("pointerleave", this.handlePointerLeave);
+  }
+  unbindPointerEvents() {
+    this.container.removeEventListener("pointermove", this.handlePointerMove);
+    this.container.removeEventListener("pointerleave", this.handlePointerLeave);
+  }
+  updateCrosshair(event) {
+    const primaryBuffer = this.getPrimaryBuffer();
+    const maxLength = this.getMaxSeriesLength();
+    if (!primaryBuffer || maxLength === 0) {
+      this.handlePointerLeave();
+      return;
+    }
+    const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
+    const priceRange = this.priceScaleModel.getVisiblePriceRange(
+      Array.from(this.series.values(), (series) => series.buffer),
+      visibleRange
+    );
+    const layout = getChartLayout(this.size, this.options.padding, {
+      priceScaleWidth: PRICE_SCALE_WIDTH,
+      timeScaleHeight: TIME_SCALE_HEIGHT
+    });
+    const rect = this.container.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const plotArea = layout.plotArea;
+    if (pointerX < plotArea.x || pointerX > plotArea.x + plotArea.width || pointerY < plotArea.y || pointerY > plotArea.y + plotArea.height) {
+      this.handlePointerLeave();
+      return;
+    }
+    const x = clamp(pointerX, plotArea.x, plotArea.x + plotArea.width);
+    const y = clamp(pointerY, plotArea.y, plotArea.y + plotArea.height);
+    const dataIndex = xToIndex(x, visibleRange, plotArea);
+    const timestamp = primaryBuffer.time[dataIndex];
+    if (timestamp === void 0) {
+      return;
+    }
+    this.crosshair = {
+      x,
+      y,
+      priceLabel: formatPriceLabel(yToPrice(y, priceRange, plotArea)),
+      timeLabel: formatTimeLabel(
+        timestamp,
+        Math.max(1, visibleRange.to - visibleRange.from + 1)
+      )
+    };
+    this.render();
+  }
+  getPrimaryBuffer() {
+    for (const series of this.series.values()) {
+      if (series.buffer.length > 0) {
+        return series.buffer;
+      }
+    }
+    return void 0;
   }
 };
 function measureElementSize(element) {

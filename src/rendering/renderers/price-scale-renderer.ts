@@ -1,5 +1,6 @@
 import type { PriceRange } from "../../core/scales/price-scale";
 import type { PlotArea } from "../common/geometry";
+import { formatPriceLabel } from "../common/chart-coordinates";
 
 interface PriceScaleTick {
   y: number;
@@ -70,8 +71,4 @@ export function getPriceScaleTicks(
   }
 
   return ticks;
-}
-
-function formatPriceLabel(value: number): string {
-  return value.toFixed(value >= 100 ? 2 : 4).replace(/\.?0+$/, "");
 }

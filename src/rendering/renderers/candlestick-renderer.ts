@@ -3,6 +3,7 @@ import type { CandleBuffer } from "../../data/buffers/candle-buffer";
 import type { PlotArea } from "../common/geometry";
 import type { PriceRange } from "../../core/scales/price-scale";
 import type { IndexRange } from "../../core/scales/time-scale";
+import { indexToX, priceToY } from "../common/chart-coordinates";
 
 const DEFAULT_SERIES_OPTIONS: Required<CandlestickSeriesOptions> = {
   upColor: "#22c55e",
@@ -53,8 +54,7 @@ export function renderCandlesticks(params: {
     const low = getBufferValue(buffer.low, index);
     const close = getBufferValue(buffer.close, index);
     const isUp = close >= open;
-    const x =
-      plotArea.x + (index - visibleRange.from + 0.5) * candleSpacing;
+    const x = indexToX(index, visibleRange, plotArea);
     const highY = priceToY(high, priceRange, plotArea);
     const lowY = priceToY(low, priceRange, plotArea);
     const openY = priceToY(open, priceRange, plotArea);
@@ -71,11 +71,6 @@ export function renderCandlesticks(params: {
     context.fillStyle = isUp ? options.upColor : options.downColor;
     context.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
   }
-}
-
-function priceToY(price: number, range: PriceRange, plotArea: PlotArea): number {
-  const ratio = (price - range.min) / (range.max - range.min);
-  return plotArea.y + plotArea.height - ratio * plotArea.height;
 }
 
 function getBufferValue(buffer: Float64Array, index: number): number {

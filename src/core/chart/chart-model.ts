@@ -2,7 +2,15 @@ import { resolveChartOptions } from "./chart-options";
 import { PriceScaleModel } from "../scales/price-scale";
 import { TimeScaleModel } from "../scales/time-scale";
 import { CanvasLayerManager } from "../../rendering/canvas/canvas-layer-manager";
+import {
+  clamp,
+  formatPriceLabel,
+  formatTimeLabel,
+  xToIndex,
+  yToPrice,
+} from "../../rendering/common/chart-coordinates";
 import { getChartLayout } from "../../rendering/common/geometry";
+import { renderCrosshair, type CrosshairState } from "../../rendering/renderers/crosshair-renderer";
 import { renderCandlesticks, resolveSeriesOptions } from "../../rendering/renderers/candlestick-renderer";
 import { renderPriceScale } from "../../rendering/renderers/price-scale-renderer";
 import { renderTimeScale } from "../../rendering/renderers/time-scale-renderer";
@@ -19,6 +27,8 @@ import type { ChartLayout, Size } from "../../rendering/common/geometry";
 const PRICE_SCALE_WIDTH = 72;
 const TIME_SCALE_HEIGHT = 28;
 const AXIS_BACKGROUND = "#0f172a";
+const CROSSHAIR_LINE_COLOR = "rgba(226, 232, 240, 0.65)";
+const CROSSHAIR_LABEL_COLOR = "#1d4ed8";
 
 interface CandlestickSeriesState {
   id: number;
@@ -34,7 +44,19 @@ export class ChartModel {
   private readonly series = new Map<number, CandlestickSeriesState>();
   private nextSeriesId = 1;
   private size: Size;
+  private crosshair: CrosshairState | undefined;
   private resizeObserver: ResizeObserver | undefined;
+  private readonly handlePointerMove = (event: PointerEvent): void => {
+    this.updateCrosshair(event);
+  };
+  private readonly handlePointerLeave = (): void => {
+    if (!this.crosshair) {
+      return;
+    }
+
+    this.crosshair = undefined;
+    this.render();
+  };
 
   constructor(
     private readonly container: HTMLElement,
@@ -45,6 +67,7 @@ export class ChartModel {
     this.size = this.resolveInitialSize();
     this.applyContainerStyles();
     this.layerManager.resize(this.size);
+    this.bindPointerEvents();
     this.bindContainerResize();
     this.render();
   }
@@ -150,10 +173,24 @@ export class ChartModel {
       backgroundColor: AXIS_BACKGROUND,
       tickCount: this.options.grid.verticalLines + 1,
     });
+
+    if (this.crosshair) {
+      renderCrosshair({
+        context,
+        plotArea,
+        priceScaleArea: layout.priceScaleArea,
+        timeScaleArea: layout.timeScaleArea,
+        state: this.crosshair,
+        lineColor: CROSSHAIR_LINE_COLOR,
+        textColor: "#eff6ff",
+        accentColor: CROSSHAIR_LABEL_COLOR,
+      });
+    }
   }
 
   dispose(): void {
     this.resizeObserver?.disconnect();
+    this.unbindPointerEvents();
     this.series.clear();
     this.layerManager.dispose();
   }
@@ -227,6 +264,81 @@ export class ChartModel {
 
       this.resize(nextSize.width, nextSize.height);
     });
+  }
+
+  private bindPointerEvents(): void {
+    this.container.addEventListener("pointermove", this.handlePointerMove);
+    this.container.addEventListener("pointerleave", this.handlePointerLeave);
+  }
+
+  private unbindPointerEvents(): void {
+    this.container.removeEventListener("pointermove", this.handlePointerMove);
+    this.container.removeEventListener("pointerleave", this.handlePointerLeave);
+  }
+
+  private updateCrosshair(event: PointerEvent): void {
+    const primaryBuffer = this.getPrimaryBuffer();
+    const maxLength = this.getMaxSeriesLength();
+
+    if (!primaryBuffer || maxLength === 0) {
+      this.handlePointerLeave();
+      return;
+    }
+
+    const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
+    const priceRange = this.priceScaleModel.getVisiblePriceRange(
+      Array.from(this.series.values(), (series) => series.buffer),
+      visibleRange,
+    );
+    const layout = getChartLayout(this.size, this.options.padding, {
+      priceScaleWidth: PRICE_SCALE_WIDTH,
+      timeScaleHeight: TIME_SCALE_HEIGHT,
+    });
+    const rect = this.container.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const plotArea = layout.plotArea;
+
+    if (
+      pointerX < plotArea.x ||
+      pointerX > plotArea.x + plotArea.width ||
+      pointerY < plotArea.y ||
+      pointerY > plotArea.y + plotArea.height
+    ) {
+      this.handlePointerLeave();
+      return;
+    }
+
+    const x = clamp(pointerX, plotArea.x, plotArea.x + plotArea.width);
+    const y = clamp(pointerY, plotArea.y, plotArea.y + plotArea.height);
+    const dataIndex = xToIndex(x, visibleRange, plotArea);
+    const timestamp = primaryBuffer.time[dataIndex];
+
+    if (timestamp === undefined) {
+      return;
+    }
+
+    this.crosshair = {
+      x,
+      y,
+      priceLabel: formatPriceLabel(yToPrice(y, priceRange, plotArea)),
+      timeLabel: formatTimeLabel(
+        timestamp,
+        Math.max(1, visibleRange.to - visibleRange.from + 1),
+      ),
+    };
+
+    this.render();
+  }
+
+  private getPrimaryBuffer(): CandleBuffer | undefined {
+    for (const series of this.series.values()) {
+      if (series.buffer.length > 0) {
+        return series.buffer;
+      }
+    }
+
+    return undefined;
   }
 }
 
