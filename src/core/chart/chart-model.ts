@@ -2,8 +2,10 @@ import { resolveChartOptions } from "./chart-options";
 import { PriceScaleModel } from "../scales/price-scale";
 import { TimeScaleModel } from "../scales/time-scale";
 import { CanvasLayerManager } from "../../rendering/canvas/canvas-layer-manager";
-import { getPlotArea } from "../../rendering/common/geometry";
+import { getChartLayout } from "../../rendering/common/geometry";
 import { renderCandlesticks, resolveSeriesOptions } from "../../rendering/renderers/candlestick-renderer";
+import { renderPriceScale } from "../../rendering/renderers/price-scale-renderer";
+import { renderTimeScale } from "../../rendering/renderers/time-scale-renderer";
 import { createCandleBuffer } from "../../data/adapters/candle-data-adapter";
 import type {
   CandlestickData,
@@ -12,7 +14,11 @@ import type {
 } from "../../public-api/types";
 import type { CandleBuffer } from "../../data/buffers/candle-buffer";
 import type { ResolvedChartOptions } from "./chart-options";
-import type { Size } from "../../rendering/common/geometry";
+import type { ChartLayout, Size } from "../../rendering/common/geometry";
+
+const PRICE_SCALE_WIDTH = 72;
+const TIME_SCALE_HEIGHT = 28;
+const AXIS_BACKGROUND = "#0f172a";
 
 interface CandlestickSeriesState {
   id: number;
@@ -93,13 +99,18 @@ export class ChartModel {
 
   render(): void {
     const context = this.layerManager.getContext();
-    const plotArea = getPlotArea(this.size, this.options.padding);
+    const layout = getChartLayout(this.size, this.options.padding, {
+      priceScaleWidth: PRICE_SCALE_WIDTH,
+      timeScaleHeight: TIME_SCALE_HEIGHT,
+    });
+    const plotArea = layout.plotArea;
 
     this.layerManager.clear();
     drawBackground(context, this.size, this.options.backgroundColor);
-    drawGrid(context, plotArea, this.options);
+    drawGrid(context, layout, this.options);
 
     const buffers = Array.from(this.series.values(), (series) => series.buffer);
+    const primaryBuffer = buffers.find((buffer) => buffer.length > 0);
     const maxLength = this.getMaxSeriesLength();
     const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
     const priceRange = this.priceScaleModel.getVisiblePriceRange(
@@ -117,6 +128,28 @@ export class ChartModel {
         plotArea,
       });
     }
+
+    renderPriceScale({
+      context,
+      area: layout.priceScaleArea,
+      priceRange,
+      textColor: this.options.textColor,
+      borderColor: this.options.grid.color,
+      backgroundColor: AXIS_BACKGROUND,
+      tickCount: this.options.grid.horizontalLines + 1,
+    });
+
+    renderTimeScale({
+      context,
+      area: layout.timeScaleArea,
+      plotArea,
+      buffer: primaryBuffer,
+      visibleRange,
+      textColor: this.options.textColor,
+      borderColor: this.options.grid.color,
+      backgroundColor: AXIS_BACKGROUND,
+      tickCount: this.options.grid.verticalLines + 1,
+    });
   }
 
   dispose(): void {
@@ -217,9 +250,11 @@ function drawBackground(
 
 function drawGrid(
   context: CanvasRenderingContext2D,
-  plotArea: ReturnType<typeof getPlotArea>,
+  layout: ChartLayout,
   options: ResolvedChartOptions,
 ): void {
+  const plotArea = layout.plotArea;
+
   if (!options.grid.visible || plotArea.width <= 0 || plotArea.height <= 0) {
     return;
   }

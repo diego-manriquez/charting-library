@@ -125,12 +125,32 @@ var CanvasLayerManager = class {
 };
 
 // src/rendering/common/geometry.ts
-function getPlotArea(size, padding) {
+function getChartLayout(size, padding, scales) {
+  const innerWidth = Math.max(0, size.width - padding.left - padding.right);
+  const innerHeight = Math.max(0, size.height - padding.top - padding.bottom);
+  const priceScaleWidth = Math.min(scales.priceScaleWidth, innerWidth);
+  const timeScaleHeight = Math.min(scales.timeScaleHeight, innerHeight);
+  const plotWidth = Math.max(0, innerWidth - priceScaleWidth);
+  const plotHeight = Math.max(0, innerHeight - timeScaleHeight);
   return {
-    x: padding.left,
-    y: padding.top,
-    width: Math.max(0, size.width - padding.left - padding.right),
-    height: Math.max(0, size.height - padding.top - padding.bottom)
+    plotArea: {
+      x: padding.left,
+      y: padding.top,
+      width: plotWidth,
+      height: plotHeight
+    },
+    priceScaleArea: {
+      x: padding.left + plotWidth,
+      y: padding.top,
+      width: priceScaleWidth,
+      height: plotHeight
+    },
+    timeScaleArea: {
+      x: padding.left,
+      y: padding.top + plotHeight,
+      width: plotWidth,
+      height: timeScaleHeight
+    }
   };
 }
 
@@ -196,6 +216,133 @@ function getBufferValue(buffer, index) {
   return value;
 }
 
+// src/rendering/renderers/price-scale-renderer.ts
+function renderPriceScale(params) {
+  const {
+    context,
+    area,
+    priceRange,
+    textColor,
+    borderColor,
+    backgroundColor,
+    tickCount
+  } = params;
+  if (area.width <= 0 || area.height <= 0) {
+    return;
+  }
+  context.fillStyle = backgroundColor;
+  context.fillRect(area.x, area.y, area.width, area.height);
+  context.strokeStyle = borderColor;
+  context.beginPath();
+  context.moveTo(area.x + 0.5, area.y);
+  context.lineTo(area.x + 0.5, area.y + area.height);
+  context.stroke();
+  context.fillStyle = textColor;
+  context.font = "12px ui-sans-serif, system-ui, sans-serif";
+  context.textAlign = "right";
+  context.textBaseline = "middle";
+  for (const tick of getPriceScaleTicks(priceRange, area, tickCount)) {
+    context.fillText(
+      formatPriceLabel(tick.value),
+      area.x + area.width - 8,
+      tick.y
+    );
+  }
+}
+function getPriceScaleTicks(priceRange, area, tickCount) {
+  const ticks = [];
+  const safeTickCount = Math.max(2, tickCount);
+  for (let index = 0; index < safeTickCount; index += 1) {
+    const ratio = safeTickCount === 1 ? 0 : index / (safeTickCount - 1);
+    ticks.push({
+      y: area.y + ratio * area.height,
+      value: priceRange.max - ratio * (priceRange.max - priceRange.min)
+    });
+  }
+  return ticks;
+}
+function formatPriceLabel(value) {
+  return value.toFixed(value >= 100 ? 2 : 4).replace(/\.?0+$/, "");
+}
+
+// src/rendering/renderers/time-scale-renderer.ts
+function renderTimeScale(params) {
+  const {
+    context,
+    area,
+    plotArea,
+    buffer,
+    visibleRange,
+    textColor,
+    borderColor,
+    backgroundColor,
+    tickCount
+  } = params;
+  if (area.width <= 0 || area.height <= 0) {
+    return;
+  }
+  context.fillStyle = backgroundColor;
+  context.fillRect(area.x, area.y, area.width, area.height);
+  context.strokeStyle = borderColor;
+  context.beginPath();
+  context.moveTo(area.x, area.y + 0.5);
+  context.lineTo(area.x + area.width, area.y + 0.5);
+  context.stroke();
+  if (!buffer || buffer.length === 0) {
+    return;
+  }
+  context.fillStyle = textColor;
+  context.font = "12px ui-sans-serif, system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  for (const tick of getTimeScaleTicks(buffer, visibleRange, plotArea, tickCount)) {
+    context.fillText(tick.label, tick.x, area.y + area.height / 2);
+  }
+}
+function getTimeScaleTicks(buffer, visibleRange, plotArea, tickCount) {
+  const ticks = [];
+  const visibleCount = Math.max(1, visibleRange.to - visibleRange.from + 1);
+  const safeTickCount = Math.max(2, Math.min(tickCount, visibleCount));
+  const denominator = Math.max(1, safeTickCount - 1);
+  for (let tickIndex = 0; tickIndex < safeTickCount; tickIndex += 1) {
+    const ratio = tickIndex / denominator;
+    const index = Math.min(
+      visibleRange.to,
+      visibleRange.from + Math.round(ratio * (visibleCount - 1))
+    );
+    const timestamp = buffer.time[index];
+    if (timestamp === void 0) {
+      continue;
+    }
+    ticks.push({
+      x: plotArea.x + ratio * plotArea.width,
+      label: formatTimeLabel(timestamp, visibleCount)
+    });
+  }
+  return dedupeTicks(ticks);
+}
+function formatTimeLabel(timestamp, visibleCount) {
+  const date = new Date(timestamp);
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getUTCDate()}`.padStart(2, "0");
+  if (visibleCount <= 40) {
+    return `${month}-${day}`;
+  }
+  return `${date.getUTCFullYear()}-${month}`;
+}
+function dedupeTicks(ticks) {
+  const deduped = [];
+  let previousLabel = "";
+  for (const tick of ticks) {
+    if (tick.label === previousLabel) {
+      continue;
+    }
+    deduped.push(tick);
+    previousLabel = tick.label;
+  }
+  return deduped;
+}
+
 // src/data/adapters/candle-data-adapter.ts
 function createCandleBuffer(data) {
   const length = data.length;
@@ -242,6 +389,9 @@ function validateCandle(candle, index, timestamp) {
 }
 
 // src/core/chart/chart-model.ts
+var PRICE_SCALE_WIDTH = 72;
+var TIME_SCALE_HEIGHT = 28;
+var AXIS_BACKGROUND = "#0f172a";
 var ChartModel = class {
   constructor(container, options) {
     this.container = container;
@@ -301,11 +451,16 @@ var ChartModel = class {
   }
   render() {
     const context = this.layerManager.getContext();
-    const plotArea = getPlotArea(this.size, this.options.padding);
+    const layout = getChartLayout(this.size, this.options.padding, {
+      priceScaleWidth: PRICE_SCALE_WIDTH,
+      timeScaleHeight: TIME_SCALE_HEIGHT
+    });
+    const plotArea = layout.plotArea;
     this.layerManager.clear();
     drawBackground(context, this.size, this.options.backgroundColor);
-    drawGrid(context, plotArea, this.options);
+    drawGrid(context, layout, this.options);
     const buffers = Array.from(this.series.values(), (series) => series.buffer);
+    const primaryBuffer = buffers.find((buffer) => buffer.length > 0);
     const maxLength = this.getMaxSeriesLength();
     const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
     const priceRange = this.priceScaleModel.getVisiblePriceRange(
@@ -322,6 +477,26 @@ var ChartModel = class {
         plotArea
       });
     }
+    renderPriceScale({
+      context,
+      area: layout.priceScaleArea,
+      priceRange,
+      textColor: this.options.textColor,
+      borderColor: this.options.grid.color,
+      backgroundColor: AXIS_BACKGROUND,
+      tickCount: this.options.grid.horizontalLines + 1
+    });
+    renderTimeScale({
+      context,
+      area: layout.timeScaleArea,
+      plotArea,
+      buffer: primaryBuffer,
+      visibleRange,
+      textColor: this.options.textColor,
+      borderColor: this.options.grid.color,
+      backgroundColor: AXIS_BACKGROUND,
+      tickCount: this.options.grid.verticalLines + 1
+    });
   }
   dispose() {
     this.resizeObserver?.disconnect();
@@ -390,7 +565,8 @@ function drawBackground(context, size, color) {
   context.fillStyle = color;
   context.fillRect(0, 0, size.width, size.height);
 }
-function drawGrid(context, plotArea, options) {
+function drawGrid(context, layout, options) {
+  const plotArea = layout.plotArea;
   if (!options.grid.visible || plotArea.width <= 0 || plotArea.height <= 0) {
     return;
   }
