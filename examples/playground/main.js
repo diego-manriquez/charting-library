@@ -25,6 +25,7 @@ const candles = chart.addSeries("candlestick", {
 
 candles.setData(generateCandles(120));
 chart.timeScale().fitContent();
+chart.resize(container.clientWidth, container.clientHeight);
 
 window.addEventListener("resize", () => {
   chart.resize(container.clientWidth, container.clientHeight);

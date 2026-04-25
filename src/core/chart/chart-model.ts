@@ -28,6 +28,7 @@ export class ChartModel {
   private readonly series = new Map<number, CandlestickSeriesState>();
   private nextSeriesId = 1;
   private size: Size;
+  private resizeObserver: ResizeObserver | undefined;
 
   constructor(
     private readonly container: HTMLElement,
@@ -38,6 +39,7 @@ export class ChartModel {
     this.size = this.resolveInitialSize();
     this.applyContainerStyles();
     this.layerManager.resize(this.size);
+    this.bindContainerResize();
     this.render();
   }
 
@@ -118,19 +120,22 @@ export class ChartModel {
   }
 
   dispose(): void {
+    this.resizeObserver?.disconnect();
     this.series.clear();
     this.layerManager.dispose();
   }
 
   private resolveInitialSize(): Size {
+    const measuredSize = measureElementSize(this.container);
+
     return {
       width: Math.max(
         1,
-        this.options.width ?? this.container.clientWidth ?? 0,
+        this.options.width ?? measuredSize.width,
       ),
       height: Math.max(
         1,
-        this.options.height ?? this.container.clientHeight ?? 0,
+        this.options.height ?? measuredSize.height,
       ),
     };
   }
@@ -150,6 +155,55 @@ export class ChartModel {
       this.container.style.position = "relative";
     }
   }
+
+  private bindContainerResize(): void {
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.options.width !== undefined && this.options.height !== undefined) {
+          return;
+        }
+
+        const nextSize = this.resolveInitialSize();
+
+        if (
+          nextSize.width === this.size.width &&
+          nextSize.height === this.size.height
+        ) {
+          return;
+        }
+
+        this.resize(nextSize.width, nextSize.height);
+      });
+
+      this.resizeObserver.observe(this.container);
+    }
+
+    requestAnimationFrame(() => {
+      if (!this.container.isConnected) {
+        return;
+      }
+
+      const nextSize = this.resolveInitialSize();
+
+      if (
+        nextSize.width === this.size.width &&
+        nextSize.height === this.size.height
+      ) {
+        return;
+      }
+
+      this.resize(nextSize.width, nextSize.height);
+    });
+  }
+}
+
+function measureElementSize(element: HTMLElement): Size {
+  const rect = element.getBoundingClientRect();
+
+  return {
+    width: Math.max(element.clientWidth, Math.round(rect.width), 0),
+    height: Math.max(element.clientHeight, Math.round(rect.height), 0),
+  };
 }
 
 function drawBackground(

@@ -250,6 +250,7 @@ var ChartModel = class {
     this.size = this.resolveInitialSize();
     this.applyContainerStyles();
     this.layerManager.resize(this.size);
+    this.bindContainerResize();
     this.render();
   }
   container;
@@ -260,6 +261,7 @@ var ChartModel = class {
   series = /* @__PURE__ */ new Map();
   nextSeriesId = 1;
   size;
+  resizeObserver;
   addCandlestickSeries(options) {
     const id = this.nextSeriesId;
     this.nextSeriesId += 1;
@@ -322,18 +324,20 @@ var ChartModel = class {
     }
   }
   dispose() {
+    this.resizeObserver?.disconnect();
     this.series.clear();
     this.layerManager.dispose();
   }
   resolveInitialSize() {
+    const measuredSize = measureElementSize(this.container);
     return {
       width: Math.max(
         1,
-        this.options.width ?? this.container.clientWidth ?? 0
+        this.options.width ?? measuredSize.width
       ),
       height: Math.max(
         1,
-        this.options.height ?? this.container.clientHeight ?? 0
+        this.options.height ?? measuredSize.height
       )
     };
   }
@@ -349,7 +353,39 @@ var ChartModel = class {
       this.container.style.position = "relative";
     }
   }
+  bindContainerResize() {
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.options.width !== void 0 && this.options.height !== void 0) {
+          return;
+        }
+        const nextSize = this.resolveInitialSize();
+        if (nextSize.width === this.size.width && nextSize.height === this.size.height) {
+          return;
+        }
+        this.resize(nextSize.width, nextSize.height);
+      });
+      this.resizeObserver.observe(this.container);
+    }
+    requestAnimationFrame(() => {
+      if (!this.container.isConnected) {
+        return;
+      }
+      const nextSize = this.resolveInitialSize();
+      if (nextSize.width === this.size.width && nextSize.height === this.size.height) {
+        return;
+      }
+      this.resize(nextSize.width, nextSize.height);
+    });
+  }
 };
+function measureElementSize(element) {
+  const rect = element.getBoundingClientRect();
+  return {
+    width: Math.max(element.clientWidth, Math.round(rect.width), 0),
+    height: Math.max(element.clientHeight, Math.round(rect.height), 0)
+  };
+}
 function drawBackground(context, size, color) {
   context.fillStyle = color;
   context.fillRect(0, 0, size.width, size.height);

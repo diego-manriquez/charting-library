@@ -21,12 +21,20 @@ const MIME_TYPES = {
 createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
-    const pathname =
-      url.pathname === "/"
-        ? "/examples/playground/index.html"
-        : decodeURIComponent(url.pathname);
+    if (url.pathname === "/") {
+      response.writeHead(302, {
+        Location: "/examples/playground/",
+      });
+      response.end();
+      return;
+    }
 
-    const absolutePath = normalize(join(ROOT, pathname));
+    const pathname = decodeURIComponent(url.pathname);
+    const normalizedPathname = pathname.endsWith("/")
+      ? `${pathname}index.html`
+      : pathname;
+
+    const absolutePath = normalize(join(ROOT, normalizedPathname));
 
     if (!absolutePath.startsWith(ROOT)) {
       response.writeHead(403);
