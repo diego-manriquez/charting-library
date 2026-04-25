@@ -1,4 +1,5 @@
 export type SeriesType = "candlestick" | "line";
+export type Unsubscribe = () => void;
 
 export interface ChartPaddingOptions {
   top?: number;
@@ -60,6 +61,17 @@ export interface LineSeriesApi {
   update(data: LineData): void;
 }
 
+export interface CrosshairMoveEvent {
+  point: { x: number; y: number } | undefined;
+  time: number | undefined;
+  price: number | undefined;
+}
+
+export interface VisibleRange {
+  from: number;
+  to: number;
+}
+
 export interface TimeScaleApi {
   fitContent(): void;
 }
@@ -75,6 +87,12 @@ export interface ChartApi {
   ): LineSeriesApi;
   removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void;
   resize(width: number, height: number): void;
+  subscribeCrosshairMove(
+    handler: (event: CrosshairMoveEvent) => void,
+  ): Unsubscribe;
+  subscribeVisibleRangeChange(
+    handler: (range: VisibleRange | undefined) => void,
+  ): Unsubscribe;
   timeScale(): TimeScaleApi;
   dispose(): void;
 }

@@ -49,6 +49,35 @@
         overflow: hidden;
         box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
       }
+
+      .telemetry {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .telemetry-card {
+        padding: 14px 16px;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.72);
+      }
+
+      .telemetry-label {
+        margin: 0 0 6px;
+        font-size: 12px;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .telemetry-value {
+        margin: 0;
+        font-size: 14px;
+        color: #e2e8f0;
+        font-variant-numeric: tabular-nums;
+      }
     </style>
   </head>
   <body>
@@ -56,6 +85,16 @@
       <h1>Charting Engine Playground</h1>
       <p>Manual test harness for the current candlestick MVP.</p>
       <div id="chart"></div>
+      <section class="telemetry" aria-label="Chart events">
+        <article class="telemetry-card">
+          <p class="telemetry-label">Crosshair</p>
+          <p id="crosshair-event" class="telemetry-value">Move over the chart</p>
+        </article>
+        <article class="telemetry-card">
+          <p class="telemetry-label">Visible Range</p>
+          <p id="visible-range-event" class="telemetry-value">Waiting for render</p>
+        </article>
+      </section>
     </main>
     <script type="module" src="./main.js"></script>
   </body>

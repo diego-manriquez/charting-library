@@ -1,6 +1,8 @@
 import { createChart } from "../../dist/index.js";
 
 const container = document.getElementById("chart");
+const crosshairEvent = document.getElementById("crosshair-event");
+const visibleRangeEvent = document.getElementById("visible-range-event");
 
 if (!container) {
   throw new Error("Missing chart container.");
@@ -37,6 +39,31 @@ candles.setData(initialCandles);
 closeLine.setData(initialLine);
 chart.timeScale().fitContent();
 chart.resize(container.clientWidth, container.clientHeight);
+
+chart.subscribeCrosshairMove((event) => {
+  if (!crosshairEvent) {
+    return;
+  }
+
+  if (!event.point || event.time === undefined || event.price === undefined) {
+    crosshairEvent.textContent = "Move over the chart";
+    return;
+  }
+
+  crosshairEvent.textContent =
+    `x=${event.point.x.toFixed(1)} y=${event.point.y.toFixed(1)} ` +
+    `time=${formatDate(event.time)} price=${event.price.toFixed(3)}`;
+});
+
+chart.subscribeVisibleRangeChange((range) => {
+  if (!visibleRangeEvent) {
+    return;
+  }
+
+  visibleRangeEvent.textContent = range
+    ? `from=${range.from} to=${range.to}`
+    : "No visible range";
+});
 
 let liveIndex = 120;
 let liveCandle = generateNextCandle();
@@ -136,4 +163,8 @@ function randomBetween(min, max) {
 
 function round(value) {
   return Math.round(value * 100) / 100;
+}
+
+function formatDate(timestamp) {
+  return new Date(timestamp).toISOString().slice(0, 10);
 }

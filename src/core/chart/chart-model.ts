@@ -46,6 +46,11 @@ import {
   getSeriesBufferTimeAt,
   type SeriesDataBuffer,
 } from "../series/series-types";
+import { EventEmitter } from "../events/event-emitter";
+import type {
+  CrosshairMoveEvent,
+  VisibleRange,
+} from "../../public-api/types";
 
 const PRICE_SCALE_WIDTH = 72;
 const TIME_SCALE_HEIGHT = 28;
@@ -77,9 +82,12 @@ export class ChartModel {
   private readonly priceScaleModel = new PriceScaleModel();
   private readonly layerManager: CanvasLayerManager;
   private readonly series = new Map<number, SeriesState>();
+  private readonly crosshairMoveEmitter = new EventEmitter<CrosshairMoveEvent>();
+  private readonly visibleRangeEmitter = new EventEmitter<VisibleRange | undefined>();
   private nextSeriesId = 1;
   private size: Size;
   private crosshair: CrosshairState | undefined;
+  private lastEmittedVisibleRange: VisibleRange | undefined;
   private activePointerId: number | undefined;
   private lastPanX: number | undefined;
   private resizeObserver: ResizeObserver | undefined;
@@ -105,6 +113,11 @@ export class ChartModel {
     }
 
     this.crosshair = undefined;
+    this.crosshairMoveEmitter.emit({
+      point: undefined,
+      time: undefined,
+      price: undefined,
+    });
     this.render();
   };
   private readonly handleWheel = (event: WheelEvent): void => {
@@ -251,6 +264,18 @@ export class ChartModel {
     this.render();
   }
 
+  subscribeCrosshairMove(
+    handler: (event: CrosshairMoveEvent) => void,
+  ): () => void {
+    return this.crosshairMoveEmitter.subscribe(handler);
+  }
+
+  subscribeVisibleRangeChange(
+    handler: (range: VisibleRange | undefined) => void,
+  ): () => void {
+    return this.visibleRangeEmitter.subscribe(handler);
+  }
+
   render(): void {
     const context = this.layerManager.getContext();
     const layout = getChartLayout(this.size, this.options.padding, {
@@ -321,6 +346,8 @@ export class ChartModel {
       tickCount: this.options.grid.verticalLines + 1,
     });
 
+    this.emitVisibleRangeIfChanged(visibleRange, maxLength);
+
     if (this.crosshair) {
       renderCrosshair({
         context,
@@ -338,6 +365,8 @@ export class ChartModel {
   dispose(): void {
     this.resizeObserver?.disconnect();
     this.unbindPointerEvents();
+    this.crosshairMoveEmitter.clear();
+    this.visibleRangeEmitter.clear();
     this.series.clear();
     this.layerManager.dispose();
   }
@@ -539,6 +568,11 @@ export class ChartModel {
         Math.max(1, visibleRange.to - visibleRange.from + 1),
       ),
     };
+    this.crosshairMoveEmitter.emit({
+      point: { x, y },
+      time: timestamp,
+      price: yToPrice(y, priceRange, plotArea),
+    });
 
     this.render();
   }
@@ -591,6 +625,22 @@ export class ChartModel {
       priceScaleWidth: PRICE_SCALE_WIDTH,
       timeScaleHeight: TIME_SCALE_HEIGHT,
     });
+  }
+
+  private emitVisibleRangeIfChanged(
+    visibleRange: VisibleRange,
+    maxLength: number,
+  ): void {
+    const nextRange = maxLength > 0 ? visibleRange : undefined;
+
+    if (areVisibleRangesEqual(this.lastEmittedVisibleRange, nextRange)) {
+      return;
+    }
+
+    this.lastEmittedVisibleRange = nextRange
+      ? { from: nextRange.from, to: nextRange.to }
+      : undefined;
+    this.visibleRangeEmitter.emit(this.lastEmittedVisibleRange);
   }
 }
 
@@ -664,4 +714,19 @@ function isPointInPlotArea(x: number, y: number, plotArea: ChartLayout["plotArea
     y >= plotArea.y &&
     y <= plotArea.y + plotArea.height
   );
+}
+
+function areVisibleRangesEqual(
+  left: VisibleRange | undefined,
+  right: VisibleRange | undefined,
+): boolean {
+  if (!left && !right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.from === right.from && left.to === right.to;
 }

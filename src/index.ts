@@ -5,9 +5,12 @@ export type {
   CandlestickSeriesOptions,
   ChartApi,
   ChartOptions,
+  CrosshairMoveEvent,
   LineData,
   LineSeriesApi,
   LineSeriesOptions,
   SeriesType,
   TimeScaleApi,
+  Unsubscribe,
+  VisibleRange,
 } from "./public-api/types";

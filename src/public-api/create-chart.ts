@@ -5,11 +5,14 @@ import type {
   CandlestickSeriesOptions,
   ChartApi,
   ChartOptions,
+  CrosshairMoveEvent,
   LineData,
   LineSeriesApi,
   LineSeriesOptions,
   SeriesType,
   TimeScaleApi,
+  Unsubscribe,
+  VisibleRange,
 } from "./types";
 
 class CandlestickSeriesApiImpl implements CandlestickSeriesApi {
@@ -106,6 +109,18 @@ class ChartApiImpl implements ChartApi {
 
   resize(width: number, height: number): void {
     this.chartModel.resize(width, height);
+  }
+
+  subscribeCrosshairMove(
+    handler: (event: CrosshairMoveEvent) => void,
+  ): Unsubscribe {
+    return this.chartModel.subscribeCrosshairMove(handler);
+  }
+
+  subscribeVisibleRangeChange(
+    handler: (range: VisibleRange | undefined) => void,
+  ): Unsubscribe {
+    return this.chartModel.subscribeVisibleRangeChange(handler);
   }
 
   timeScale(): TimeScaleApi {

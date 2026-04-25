@@ -805,6 +805,25 @@ function copyWithExpandedCapacity2(source, nextLength) {
   return next;
 }
 
+// src/core/events/event-emitter.ts
+var EventEmitter = class {
+  listeners = /* @__PURE__ */ new Set();
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  emit(payload) {
+    for (const listener of this.listeners) {
+      listener(payload);
+    }
+  }
+  clear() {
+    this.listeners.clear();
+  }
+};
+
 // src/core/chart/chart-model.ts
 var PRICE_SCALE_WIDTH = 72;
 var TIME_SCALE_HEIGHT = 28;
@@ -831,9 +850,12 @@ var ChartModel = class {
   priceScaleModel = new PriceScaleModel();
   layerManager;
   series = /* @__PURE__ */ new Map();
+  crosshairMoveEmitter = new EventEmitter();
+  visibleRangeEmitter = new EventEmitter();
   nextSeriesId = 1;
   size;
   crosshair;
+  lastEmittedVisibleRange;
   activePointerId;
   lastPanX;
   resizeObserver;
@@ -857,6 +879,11 @@ var ChartModel = class {
       return;
     }
     this.crosshair = void 0;
+    this.crosshairMoveEmitter.emit({
+      point: void 0,
+      time: void 0,
+      price: void 0
+    });
     this.render();
   };
   handleWheel = (event) => {
@@ -956,6 +983,12 @@ var ChartModel = class {
     this.layerManager.resize(this.size);
     this.render();
   }
+  subscribeCrosshairMove(handler) {
+    return this.crosshairMoveEmitter.subscribe(handler);
+  }
+  subscribeVisibleRangeChange(handler) {
+    return this.visibleRangeEmitter.subscribe(handler);
+  }
   render() {
     const context = this.layerManager.getContext();
     const layout = getChartLayout(this.size, this.options.padding, {
@@ -1019,6 +1052,7 @@ var ChartModel = class {
       backgroundColor: AXIS_BACKGROUND,
       tickCount: this.options.grid.verticalLines + 1
     });
+    this.emitVisibleRangeIfChanged(visibleRange, maxLength);
     if (this.crosshair) {
       renderCrosshair({
         context,
@@ -1035,6 +1069,8 @@ var ChartModel = class {
   dispose() {
     this.resizeObserver?.disconnect();
     this.unbindPointerEvents();
+    this.crosshairMoveEmitter.clear();
+    this.visibleRangeEmitter.clear();
     this.series.clear();
     this.layerManager.dispose();
   }
@@ -1189,6 +1225,11 @@ var ChartModel = class {
         Math.max(1, visibleRange.to - visibleRange.from + 1)
       )
     };
+    this.crosshairMoveEmitter.emit({
+      point: { x, y },
+      time: timestamp,
+      price: yToPrice(y, priceRange, plotArea)
+    });
     this.render();
   }
   panFromPointer(event) {
@@ -1229,6 +1270,14 @@ var ChartModel = class {
       priceScaleWidth: PRICE_SCALE_WIDTH,
       timeScaleHeight: TIME_SCALE_HEIGHT
     });
+  }
+  emitVisibleRangeIfChanged(visibleRange, maxLength) {
+    const nextRange = maxLength > 0 ? visibleRange : void 0;
+    if (areVisibleRangesEqual(this.lastEmittedVisibleRange, nextRange)) {
+      return;
+    }
+    this.lastEmittedVisibleRange = nextRange ? { from: nextRange.from, to: nextRange.to } : void 0;
+    this.visibleRangeEmitter.emit(this.lastEmittedVisibleRange);
   }
 };
 function measureElementSize(element) {
@@ -1277,6 +1326,15 @@ function drawGrid(context, layout, options, priceScaleTicks) {
 }
 function isPointInPlotArea(x, y, plotArea) {
   return x >= plotArea.x && x <= plotArea.x + plotArea.width && y >= plotArea.y && y <= plotArea.y + plotArea.height;
+}
+function areVisibleRangesEqual(left, right) {
+  if (!left && !right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return left.from === right.from && left.to === right.to;
 }
 
 // src/public-api/create-chart.ts
@@ -1352,6 +1410,12 @@ var ChartApiImpl = class {
   }
   resize(width, height) {
     this.chartModel.resize(width, height);
+  }
+  subscribeCrosshairMove(handler) {
+    return this.chartModel.subscribeCrosshairMove(handler);
+  }
+  subscribeVisibleRangeChange(handler) {
+    return this.chartModel.subscribeVisibleRangeChange(handler);
   }
   timeScale() {
     return this.timeScaleApi;

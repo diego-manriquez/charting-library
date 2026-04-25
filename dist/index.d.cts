@@ -1,4 +1,5 @@
 type SeriesType = "candlestick" | "line";
+type Unsubscribe = () => void;
 interface ChartPaddingOptions {
     top?: number;
     right?: number;
@@ -50,6 +51,18 @@ interface LineSeriesApi {
     setData(data: LineData[]): void;
     update(data: LineData): void;
 }
+interface CrosshairMoveEvent {
+    point: {
+        x: number;
+        y: number;
+    } | undefined;
+    time: number | undefined;
+    price: number | undefined;
+}
+interface VisibleRange {
+    from: number;
+    to: number;
+}
 interface TimeScaleApi {
     fitContent(): void;
 }
@@ -58,10 +71,12 @@ interface ChartApi {
     addSeries(type: "line", options?: LineSeriesOptions): LineSeriesApi;
     removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void;
     resize(width: number, height: number): void;
+    subscribeCrosshairMove(handler: (event: CrosshairMoveEvent) => void): Unsubscribe;
+    subscribeVisibleRangeChange(handler: (range: VisibleRange | undefined) => void): Unsubscribe;
     timeScale(): TimeScaleApi;
     dispose(): void;
 }
 
 declare function createChart(container: HTMLElement, options?: ChartOptions): ChartApi;
 
-export { type CandlestickData, type CandlestickSeriesApi, type CandlestickSeriesOptions, type ChartApi, type ChartOptions, type LineData, type LineSeriesApi, type LineSeriesOptions, type SeriesType, type TimeScaleApi, createChart };
+export { type CandlestickData, type CandlestickSeriesApi, type CandlestickSeriesOptions, type ChartApi, type ChartOptions, type CrosshairMoveEvent, type LineData, type LineSeriesApi, type LineSeriesOptions, type SeriesType, type TimeScaleApi, type Unsubscribe, type VisibleRange, createChart };
