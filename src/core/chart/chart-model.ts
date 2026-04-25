@@ -1,5 +1,10 @@
 import { resolveChartOptions } from "./chart-options";
-import { PriceScaleModel } from "../scales/price-scale";
+import {
+  panPriceRange,
+  PriceScaleModel,
+  type PriceRange,
+  zoomPriceRange,
+} from "../scales/price-scale";
 import { TimeScaleModel } from "../scales/time-scale";
 import { VolumeScaleModel } from "../scales/volume-scale";
 import { CanvasLayerManager } from "../../rendering/canvas/canvas-layer-manager";
@@ -73,6 +78,8 @@ const ZOOM_IN_FACTOR = 0.85;
 const ZOOM_OUT_FACTOR = 1.15;
 const SECONDARY_PANE_GAP = 8;
 const VOLUME_PANE_HEIGHT = 104;
+const VERTICAL_ZOOM_IN_FACTOR = 0.9;
+const VERTICAL_ZOOM_OUT_FACTOR = 1.1;
 
 interface CandlestickSeriesState {
   id: number;
@@ -97,6 +104,26 @@ interface VolumeSeriesState {
 
 type SeriesState = CandlestickSeriesState | LineSeriesState | VolumeSeriesState;
 
+type PaneKind = "main" | "secondary";
+
+interface PaneScaleState {
+  main: PriceRange | undefined;
+  secondary: PriceRange | undefined;
+}
+
+type DragInteraction =
+  | {
+      type: "horizontal-pan";
+      pointerId: number;
+      lastX: number;
+    }
+  | {
+      type: "vertical-pan";
+      pointerId: number;
+      pane: PaneKind;
+      lastY: number;
+    };
+
 export class ChartModel {
   private readonly options: ResolvedChartOptions;
   private readonly timeScaleModel = new TimeScaleModel();
@@ -110,8 +137,11 @@ export class ChartModel {
   private size: Size;
   private crosshair: CrosshairState | undefined;
   private lastEmittedVisibleRange: VisibleRange | undefined;
-  private activePointerId: number | undefined;
-  private lastPanX: number | undefined;
+  private paneScaleState: PaneScaleState = {
+    main: undefined,
+    secondary: undefined,
+  };
+  private dragInteraction: DragInteraction | undefined;
   private resizeObserver: ResizeObserver | undefined;
   private readonly handlePointerMove = (event: PointerEvent): void => {
     this.handlePointerMoveEvent(event);
@@ -126,7 +156,7 @@ export class ChartModel {
     this.handlePointerUpEvent(event);
   };
   private readonly handlePointerLeave = (): void => {
-    if (this.activePointerId !== undefined) {
+    if (this.dragInteraction) {
       return;
     }
 
@@ -362,13 +392,15 @@ export class ChartModel {
     const primaryBuffer = buffers.find((buffer) => buffer.length > 0);
     const maxLength = this.getMaxSeriesLength();
     const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
-    const priceRange = this.priceScaleModel.getVisiblePriceRange(
+    const autoPriceRange = this.priceScaleModel.getVisiblePriceRange(
       mainSeries.map((series) => series.buffer),
       visibleRange,
     );
+    const priceRange = this.paneScaleState.main ?? autoPriceRange;
     const volumeRange =
       layout.secondaryPlotArea && layout.secondaryPriceScaleArea
-        ? this.volumeScaleModel.getVisibleVolumeRange(
+        ? this.paneScaleState.secondary ??
+          this.volumeScaleModel.getVisibleVolumeRange(
             volumeSeries.map((series) => series.buffer),
             visibleRange,
           )
@@ -576,8 +608,12 @@ export class ChartModel {
   }
 
   private handlePointerMoveEvent(event: PointerEvent): void {
-    if (this.activePointerId === event.pointerId && this.lastPanX !== undefined) {
-      this.panFromPointer(event);
+    if (this.dragInteraction?.pointerId === event.pointerId) {
+      if (this.dragInteraction.type === "horizontal-pan") {
+        this.panFromPointer(event);
+      } else {
+        this.panPriceScaleFromPointer(event, this.dragInteraction.pane);
+      }
     }
 
     this.updateCrosshairFromClientPoint(event.clientX, event.clientY);
@@ -589,23 +625,35 @@ export class ChartModel {
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
 
-    if (!isPointInInteractivePlotArea(pointerX, pointerY, layout)) {
+    const target = getPointerTarget(layout, pointerX, pointerY);
+
+    if (!target) {
       return;
     }
 
-    this.activePointerId = event.pointerId;
-    this.lastPanX = pointerX;
+    this.dragInteraction =
+      target.region === "plot"
+        ? {
+            type: "horizontal-pan",
+            pointerId: event.pointerId,
+            lastX: pointerX,
+          }
+        : {
+            type: "vertical-pan",
+            pointerId: event.pointerId,
+            pane: target.pane,
+            lastY: pointerY,
+          };
     this.container.setPointerCapture?.(event.pointerId);
     this.updateCrosshairFromClientPoint(event.clientX, event.clientY);
   }
 
   private handlePointerUpEvent(event: PointerEvent): void {
-    if (this.activePointerId !== event.pointerId) {
+    if (this.dragInteraction?.pointerId !== event.pointerId) {
       return;
     }
 
-    this.activePointerId = undefined;
-    this.lastPanX = undefined;
+    this.dragInteraction = undefined;
     this.container.releasePointerCapture?.(event.pointerId);
   }
 
@@ -621,12 +669,23 @@ export class ChartModel {
     const rect = this.container.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
+    const target = getPointerTarget(layout, pointerX, pointerY);
 
-    if (!isPointInInteractivePlotArea(pointerX, pointerY, layout)) {
+    if (!target) {
       return;
     }
 
     event.preventDefault();
+
+    if (target.region === "price-scale") {
+      this.zoomPriceScaleAtPoint(
+        target.pane,
+        pointerY,
+        event.deltaY < 0 ? VERTICAL_ZOOM_IN_FACTOR : VERTICAL_ZOOM_OUT_FACTOR,
+      );
+      this.updateCrosshairFromClientPoint(event.clientX, event.clientY);
+      return;
+    }
 
     const anchorRatio =
       layout.plotArea.width <= 0
@@ -650,14 +709,16 @@ export class ChartModel {
     const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
     const mainSeries = this.getMainSeries();
     const volumeSeries = this.getVolumeSeries();
-    const priceRange = this.priceScaleModel.getVisiblePriceRange(
+    const autoPriceRange = this.priceScaleModel.getVisiblePriceRange(
       mainSeries.map((series) => series.buffer),
       visibleRange,
     );
+    const priceRange = this.paneScaleState.main ?? autoPriceRange;
     const layout = this.getLayout();
     const volumeRange =
       layout.secondaryPlotArea && layout.secondaryPriceScaleArea
-        ? this.volumeScaleModel.getVisibleVolumeRange(
+        ? this.paneScaleState.secondary ??
+          this.volumeScaleModel.getVisibleVolumeRange(
             volumeSeries.map((series) => series.buffer),
             visibleRange,
           )
@@ -712,7 +773,7 @@ export class ChartModel {
   }
 
   private panFromPointer(event: PointerEvent): void {
-    if (this.lastPanX === undefined) {
+    if (!this.dragInteraction || this.dragInteraction.type !== "horizontal-pan") {
       return;
     }
 
@@ -725,7 +786,7 @@ export class ChartModel {
     const layout = this.getLayout();
     const rect = this.container.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
-    const deltaX = pointerX - this.lastPanX;
+    const deltaX = pointerX - this.dragInteraction.lastX;
     const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
     const visibleCount = Math.max(1, visibleRange.to - visibleRange.from + 1);
     const candleSpacing = layout.plotArea.width / visibleCount;
@@ -741,7 +802,41 @@ export class ChartModel {
     }
 
     this.timeScaleModel.pan(maxLength, deltaBars);
-    this.lastPanX = pointerX;
+    this.dragInteraction = {
+      ...this.dragInteraction,
+      lastX: pointerX,
+    };
+  }
+
+  private panPriceScaleFromPointer(
+    event: PointerEvent,
+    pane: PaneKind,
+  ): void {
+    if (!this.dragInteraction || this.dragInteraction.type !== "vertical-pan") {
+      return;
+    }
+
+    const context = this.getPaneInteractionContext(pane);
+
+    if (!context) {
+      return;
+    }
+
+    const rect = this.container.getBoundingClientRect();
+    const pointerY = event.clientY - rect.top;
+    const lastValue = yToPrice(
+      this.dragInteraction.lastY,
+      context.range,
+      context.plotArea,
+    );
+    const nextValue = yToPrice(pointerY, context.range, context.plotArea);
+    const deltaPrice = lastValue - nextValue;
+
+    this.setPaneScaleRange(pane, panPriceRange(context.range, deltaPrice));
+    this.dragInteraction = {
+      ...this.dragInteraction,
+      lastY: pointerY,
+    };
   }
 
   private getPrimaryBuffer(): SeriesDataBuffer | undefined {
@@ -779,6 +874,68 @@ export class ChartModel {
 
   private hasVolumeSeries(): boolean {
     return this.getVolumeSeries().length > 0;
+  }
+
+  private zoomPriceScaleAtPoint(
+    pane: PaneKind,
+    pointerY: number,
+    scaleFactor: number,
+  ): void {
+    const context = this.getPaneInteractionContext(pane);
+
+    if (!context) {
+      return;
+    }
+
+    const anchorPrice = yToPrice(pointerY, context.range, context.plotArea);
+    this.setPaneScaleRange(
+      pane,
+      zoomPriceRange(context.range, anchorPrice, scaleFactor),
+    );
+  }
+
+  private getPaneInteractionContext(
+    pane: PaneKind,
+  ): { plotArea: ChartLayout["plotArea"]; range: PriceRange } | undefined {
+    const layout = this.getLayout();
+    const visibleRange = this.timeScaleModel.getVisibleRange(this.getMaxSeriesLength());
+
+    if (pane === "secondary") {
+      if (!layout.secondaryPlotArea) {
+        return undefined;
+      }
+
+      const range =
+        this.paneScaleState.secondary ??
+        this.volumeScaleModel.getVisibleVolumeRange(
+          this.getVolumeSeries().map((series) => series.buffer),
+          visibleRange,
+        );
+
+      return {
+        plotArea: layout.secondaryPlotArea,
+        range,
+      };
+    }
+
+    const range =
+      this.paneScaleState.main ??
+      this.priceScaleModel.getVisiblePriceRange(
+        this.getMainSeries().map((series) => series.buffer),
+        visibleRange,
+      );
+
+    return {
+      plotArea: layout.plotArea,
+      range,
+    };
+  }
+
+  private setPaneScaleRange(pane: PaneKind, range: PriceRange): void {
+    this.paneScaleState = {
+      ...this.paneScaleState,
+      [pane]: range,
+    };
   }
 
   private emitVisibleRangeIfChanged(
@@ -898,16 +1055,6 @@ function isPointInPlotArea(x: number, y: number, plotArea: ChartLayout["plotArea
   );
 }
 
-function isPointInInteractivePlotArea(x: number, y: number, layout: ChartLayout): boolean {
-  if (isPointInPlotArea(x, y, layout.plotArea)) {
-    return true;
-  }
-
-  return layout.secondaryPlotArea
-    ? isPointInPlotArea(x, y, layout.secondaryPlotArea)
-    : false;
-}
-
 function getActivePlotArea(
   layout: ChartLayout,
   x: number,
@@ -933,6 +1080,33 @@ function getActivePlotArea(
       plotArea: layout.plotArea,
       priceScaleArea: layout.priceScaleArea,
     };
+  }
+
+  return undefined;
+}
+
+function getPointerTarget(
+  layout: ChartLayout,
+  x: number,
+  y: number,
+): { region: "plot" | "price-scale"; pane: PaneKind } | undefined {
+  if (isPointInPlotArea(x, y, layout.plotArea)) {
+    return { region: "plot", pane: "main" };
+  }
+
+  if (isPointInPlotArea(x, y, layout.priceScaleArea)) {
+    return { region: "price-scale", pane: "main" };
+  }
+
+  if (layout.secondaryPlotArea && isPointInPlotArea(x, y, layout.secondaryPlotArea)) {
+    return { region: "plot", pane: "secondary" };
+  }
+
+  if (
+    layout.secondaryPriceScaleArea &&
+    isPointInPlotArea(x, y, layout.secondaryPriceScaleArea)
+  ) {
+    return { region: "price-scale", pane: "secondary" };
   }
 
   return undefined;

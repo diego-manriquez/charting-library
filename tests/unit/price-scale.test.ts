@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PriceScaleModel } from "../../src/core/scales/price-scale";
+import {
+  panPriceRange,
+  PriceScaleModel,
+  zoomPriceRange,
+} from "../../src/core/scales/price-scale";
 import type { CandleBuffer } from "../../src/data/buffers/candle-buffer";
 
 describe("PriceScaleModel", () => {
@@ -19,5 +23,17 @@ describe("PriceScaleModel", () => {
 
     expect(range.min).toBeCloseTo(16.3);
     expect(range.max).toBeCloseTo(36.7);
+  });
+
+  it("zooms around the provided anchor price", () => {
+    const range = zoomPriceRange({ min: 100, max: 200 }, 150, 0.5);
+
+    expect(range).toEqual({ min: 125, max: 175 });
+  });
+
+  it("pans the whole range by a delta price", () => {
+    const range = panPriceRange({ min: 100, max: 200 }, 15);
+
+    expect(range).toEqual({ min: 115, max: 215 });
   });
 });

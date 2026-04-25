@@ -12,6 +12,8 @@ const DEFAULT_PRICE_RANGE: PriceRange = {
   max: 1,
 };
 
+const MIN_PRICE_SPAN = 0.000001;
+
 export class PriceScaleModel {
   getVisiblePriceRange(
     buffers: Array<CandleBuffer | LineBuffer>,
@@ -60,6 +62,50 @@ export class PriceScaleModel {
       max: max + padding,
     };
   }
+}
+
+export function zoomPriceRange(
+  range: PriceRange,
+  anchorPrice: number,
+  scaleFactor: number,
+): PriceRange {
+  const safeScaleFactor = Number.isFinite(scaleFactor) && scaleFactor > 0
+    ? scaleFactor
+    : 1;
+  const nextMin = anchorPrice - (anchorPrice - range.min) * safeScaleFactor;
+  const nextMax = anchorPrice + (range.max - anchorPrice) * safeScaleFactor;
+
+  return normalizePriceRange({
+    min: nextMin,
+    max: nextMax,
+  });
+}
+
+export function panPriceRange(
+  range: PriceRange,
+  deltaPrice: number,
+): PriceRange {
+  return normalizePriceRange({
+    min: range.min + deltaPrice,
+    max: range.max + deltaPrice,
+  });
+}
+
+export function normalizePriceRange(range: PriceRange): PriceRange {
+  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+    return DEFAULT_PRICE_RANGE;
+  }
+
+  if (range.max - range.min >= MIN_PRICE_SPAN) {
+    return range;
+  }
+
+  const center = (range.min + range.max) / 2;
+
+  return {
+    min: center - MIN_PRICE_SPAN / 2,
+    max: center + MIN_PRICE_SPAN / 2,
+  };
 }
 
 function isLineBuffer(buffer: CandleBuffer | LineBuffer): buffer is LineBuffer {
