@@ -5,6 +5,9 @@ export type {
   CandlestickSeriesOptions,
   ChartApi,
   ChartOptions,
+  LineData,
+  LineSeriesApi,
+  LineSeriesOptions,
   SeriesType,
   TimeScaleApi,
 } from "./public-api/types";

@@ -5,6 +5,9 @@ import type {
   CandlestickSeriesOptions,
   ChartApi,
   ChartOptions,
+  LineData,
+  LineSeriesApi,
+  LineSeriesOptions,
   SeriesType,
   TimeScaleApi,
 } from "./types";
@@ -24,6 +27,21 @@ class CandlestickSeriesApiImpl implements CandlestickSeriesApi {
   }
 }
 
+class LineSeriesApiImpl implements LineSeriesApi {
+  constructor(
+    private readonly chartModel: ChartModel,
+    private readonly seriesId: number,
+  ) {}
+
+  setData(data: LineData[]): void {
+    this.chartModel.setLineSeriesData(this.seriesId, data);
+  }
+
+  update(data: LineData): void {
+    this.chartModel.updateLineSeriesData(this.seriesId, data);
+  }
+}
+
 class TimeScaleApiImpl implements TimeScaleApi {
   constructor(private readonly chartModel: ChartModel) {}
 
@@ -35,28 +53,47 @@ class TimeScaleApiImpl implements TimeScaleApi {
 
 class ChartApiImpl implements ChartApi {
   private readonly timeScaleApi: TimeScaleApi;
-  private readonly seriesApiIds = new WeakMap<CandlestickSeriesApi, number>();
+  private readonly seriesApiIds = new WeakMap<
+    CandlestickSeriesApi | LineSeriesApi,
+    number
+  >();
 
   constructor(private readonly chartModel: ChartModel) {
     this.timeScaleApi = new TimeScaleApiImpl(chartModel);
   }
 
   addSeries(
-    type: SeriesType,
+    type: "candlestick",
     options?: CandlestickSeriesOptions,
-  ): CandlestickSeriesApi {
-    if (type !== "candlestick") {
-      throw new Error(`Unsupported series type: ${type}.`);
+  ): CandlestickSeriesApi;
+  addSeries(
+    type: "line",
+    options?: LineSeriesOptions,
+  ): LineSeriesApi;
+  addSeries(
+    type: SeriesType,
+    options?: CandlestickSeriesOptions | LineSeriesOptions,
+  ): CandlestickSeriesApi | LineSeriesApi {
+    if (type === "candlestick") {
+      const seriesId = this.chartModel.addCandlestickSeries(
+        options as CandlestickSeriesOptions | undefined,
+      );
+      const api = new CandlestickSeriesApiImpl(this.chartModel, seriesId);
+      this.seriesApiIds.set(api, seriesId);
+
+      return api;
     }
 
-    const seriesId = this.chartModel.addCandlestickSeries(options);
-    const api = new CandlestickSeriesApiImpl(this.chartModel, seriesId);
+    const seriesId = this.chartModel.addLineSeries(
+      options as LineSeriesOptions | undefined,
+    );
+    const api = new LineSeriesApiImpl(this.chartModel, seriesId);
     this.seriesApiIds.set(api, seriesId);
 
     return api;
   }
 
-  removeSeries(series: CandlestickSeriesApi): void {
+  removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void {
     const seriesId = this.seriesApiIds.get(series);
 
     if (seriesId === undefined) {

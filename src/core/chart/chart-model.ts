@@ -13,6 +13,10 @@ import { getChartLayout } from "../../rendering/common/geometry";
 import { renderCrosshair, type CrosshairState } from "../../rendering/renderers/crosshair-renderer";
 import { renderCandlesticks, resolveSeriesOptions } from "../../rendering/renderers/candlestick-renderer";
 import {
+  renderLineSeries,
+  resolveLineSeriesOptions,
+} from "../../rendering/renderers/line-renderer";
+import {
   getPriceScaleTicks,
   renderPriceScale,
   type PriceScaleTick,
@@ -22,14 +26,26 @@ import {
   createCandleBuffer,
   updateCandleBuffer,
 } from "../../data/adapters/candle-data-adapter";
+import {
+  createLineBuffer,
+  updateLineBuffer,
+} from "../../data/adapters/line-data-adapter";
 import type {
   CandlestickData,
   CandlestickSeriesOptions,
   ChartOptions,
+  LineData,
+  LineSeriesOptions,
 } from "../../public-api/types";
 import type { CandleBuffer } from "../../data/buffers/candle-buffer";
+import type { LineBuffer } from "../../data/buffers/line-buffer";
 import type { ResolvedChartOptions } from "./chart-options";
 import type { ChartLayout, Size } from "../../rendering/common/geometry";
+import {
+  getSeriesBufferLength,
+  getSeriesBufferTimeAt,
+  type SeriesDataBuffer,
+} from "../series/series-types";
 
 const PRICE_SCALE_WIDTH = 72;
 const TIME_SCALE_HEIGHT = 28;
@@ -41,16 +57,26 @@ const ZOOM_OUT_FACTOR = 1.15;
 
 interface CandlestickSeriesState {
   id: number;
+  type: "candlestick";
   options: Required<CandlestickSeriesOptions>;
   buffer: CandleBuffer;
 }
+
+interface LineSeriesState {
+  id: number;
+  type: "line";
+  options: Required<LineSeriesOptions>;
+  buffer: LineBuffer;
+}
+
+type SeriesState = CandlestickSeriesState | LineSeriesState;
 
 export class ChartModel {
   private readonly options: ResolvedChartOptions;
   private readonly timeScaleModel = new TimeScaleModel();
   private readonly priceScaleModel = new PriceScaleModel();
   private readonly layerManager: CanvasLayerManager;
-  private readonly series = new Map<number, CandlestickSeriesState>();
+  private readonly series = new Map<number, SeriesState>();
   private nextSeriesId = 1;
   private size: Size;
   private crosshair: CrosshairState | undefined;
@@ -107,8 +133,24 @@ export class ChartModel {
 
     this.series.set(id, {
       id,
+      type: "candlestick",
       options: resolveSeriesOptions(options),
       buffer: createCandleBuffer([]),
+    });
+
+    this.render();
+    return id;
+  }
+
+  addLineSeries(options: LineSeriesOptions | undefined): number {
+    const id = this.nextSeriesId;
+    this.nextSeriesId += 1;
+
+    this.series.set(id, {
+      id,
+      type: "line",
+      options: resolveLineSeriesOptions(options),
+      buffer: createLineBuffer([]),
     });
 
     this.render();
@@ -124,7 +166,7 @@ export class ChartModel {
   setSeriesData(seriesId: number, data: CandlestickData[]): void {
     const series = this.series.get(seriesId);
 
-    if (!series) {
+    if (!series || series.type !== "candlestick") {
       throw new Error(`Series ${seriesId} does not exist.`);
     }
 
@@ -136,7 +178,7 @@ export class ChartModel {
   updateSeriesData(seriesId: number, data: CandlestickData): void {
     const series = this.series.get(seriesId);
 
-    if (!series) {
+    if (!series || series.type !== "candlestick") {
       throw new Error(`Series ${seriesId} does not exist.`);
     }
 
@@ -156,6 +198,40 @@ export class ChartModel {
     if (lastTimestamp === undefined || data.time !== lastTimestamp) {
       this.render();
       return;
+    }
+
+    this.render();
+  }
+
+  setLineSeriesData(seriesId: number, data: LineData[]): void {
+    const series = this.series.get(seriesId);
+
+    if (!series || series.type !== "line") {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+
+    series.buffer = createLineBuffer(data);
+    this.fitContent();
+    this.render();
+  }
+
+  updateLineSeriesData(seriesId: number, data: LineData): void {
+    const series = this.series.get(seriesId);
+
+    if (!series || series.type !== "line") {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+
+    const previousLength = series.buffer.length;
+    const wasFollowingLatest =
+      this.timeScaleModel.isRightEdgeVisible(previousLength);
+
+    series.buffer = updateLineBuffer(series.buffer, data);
+
+    if (previousLength === 0) {
+      this.fitContent();
+    } else if (series.buffer.length > previousLength && wasFollowingLatest) {
+      this.timeScaleModel.pan(series.buffer.length, 1);
     }
 
     this.render();
@@ -202,7 +278,19 @@ export class ChartModel {
     drawGrid(context, layout, this.options, priceScaleTicks);
 
     for (const series of this.series.values()) {
-      renderCandlesticks({
+      if (series.type === "candlestick") {
+        renderCandlesticks({
+          context,
+          buffer: series.buffer,
+          options: series.options,
+          visibleRange,
+          priceRange,
+          plotArea,
+        });
+        continue;
+      }
+
+      renderLineSeries({
         context,
         buffer: series.buffer,
         options: series.options,
@@ -273,7 +361,7 @@ export class ChartModel {
     let maxLength = 0;
 
     for (const series of this.series.values()) {
-      maxLength = Math.max(maxLength, series.buffer.length);
+      maxLength = Math.max(maxLength, getSeriesBufferLength(series.buffer));
     }
 
     return maxLength;
@@ -436,7 +524,7 @@ export class ChartModel {
     const x = clamp(pointerX, plotArea.x, plotArea.x + plotArea.width);
     const y = clamp(pointerY, plotArea.y, plotArea.y + plotArea.height);
     const dataIndex = xToIndex(x, visibleRange, plotArea);
-    const timestamp = primaryBuffer.time[dataIndex];
+    const timestamp = getSeriesBufferTimeAt(primaryBuffer, dataIndex);
 
     if (timestamp === undefined) {
       return;
@@ -488,9 +576,9 @@ export class ChartModel {
     this.lastPanX = pointerX;
   }
 
-  private getPrimaryBuffer(): CandleBuffer | undefined {
+  private getPrimaryBuffer(): SeriesDataBuffer | undefined {
     for (const series of this.series.values()) {
-      if (series.buffer.length > 0) {
+      if (getSeriesBufferLength(series.buffer) > 0) {
         return series.buffer;
       }
     }

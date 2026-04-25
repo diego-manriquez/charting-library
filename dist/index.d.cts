@@ -1,4 +1,4 @@
-type SeriesType = "candlestick";
+type SeriesType = "candlestick" | "line";
 interface ChartPaddingOptions {
     top?: number;
     right?: number;
@@ -26,6 +26,10 @@ interface CandlestickSeriesOptions {
     wickDownColor?: string;
     bodySpacingRatio?: number;
 }
+interface LineSeriesOptions {
+    color?: string;
+    lineWidth?: number;
+}
 interface CandlestickData {
     time: number | Date;
     open: number;
@@ -34,16 +38,25 @@ interface CandlestickData {
     close: number;
     volume?: number;
 }
+interface LineData {
+    time: number | Date;
+    value: number;
+}
 interface CandlestickSeriesApi {
     setData(data: CandlestickData[]): void;
     update(data: CandlestickData): void;
+}
+interface LineSeriesApi {
+    setData(data: LineData[]): void;
+    update(data: LineData): void;
 }
 interface TimeScaleApi {
     fitContent(): void;
 }
 interface ChartApi {
     addSeries(type: "candlestick", options?: CandlestickSeriesOptions): CandlestickSeriesApi;
-    removeSeries(series: CandlestickSeriesApi): void;
+    addSeries(type: "line", options?: LineSeriesOptions): LineSeriesApi;
+    removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void;
     resize(width: number, height: number): void;
     timeScale(): TimeScaleApi;
     dispose(): void;
@@ -51,4 +64,4 @@ interface ChartApi {
 
 declare function createChart(container: HTMLElement, options?: ChartOptions): ChartApi;
 
-export { type CandlestickData, type CandlestickSeriesApi, type CandlestickSeriesOptions, type ChartApi, type ChartOptions, type SeriesType, type TimeScaleApi, createChart };
+export { type CandlestickData, type CandlestickSeriesApi, type CandlestickSeriesOptions, type ChartApi, type ChartOptions, type LineData, type LineSeriesApi, type LineSeriesOptions, type SeriesType, type TimeScaleApi, createChart };

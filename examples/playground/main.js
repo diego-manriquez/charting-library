@@ -22,10 +22,19 @@ const candles = chart.addSeries("candlestick", {
   wickUpColor: "#34d399",
   wickDownColor: "#fb7185",
 });
+const closeLine = chart.addSeries("line", {
+  color: "#fbbf24",
+  lineWidth: 2,
+});
 
 const initialCandles = generateCandles(120);
+const initialLine = initialCandles.map((candle) => ({
+  time: candle.time,
+  value: candle.close,
+}));
 
 candles.setData(initialCandles);
+closeLine.setData(initialLine);
 chart.timeScale().fitContent();
 chart.resize(container.clientWidth, container.clientHeight);
 
@@ -37,11 +46,19 @@ setInterval(() => {
   if (phase < 3) {
     liveCandle = evolveCandle(liveCandle);
     candles.update(liveCandle);
+    closeLine.update({
+      time: liveCandle.time,
+      value: liveCandle.close,
+    });
     phase += 1;
     return;
   }
 
   candles.update(liveCandle);
+  closeLine.update({
+    time: liveCandle.time,
+    value: liveCandle.close,
+  });
   liveIndex += 1;
   liveCandle = generateNextCandle();
   phase = 0;

@@ -1,7 +1,8 @@
-import type { CandleBuffer } from "../../data/buffers/candle-buffer";
 import type { IndexRange } from "../../core/scales/time-scale";
 import type { PlotArea } from "../common/geometry";
 import { formatTimeLabel } from "../common/chart-coordinates";
+import type { SeriesDataBuffer } from "../../core/series/series-types";
+import { getSeriesBufferTimeAt } from "../../core/series/series-types";
 
 interface TimeScaleTick {
   x: number;
@@ -12,7 +13,7 @@ export function renderTimeScale(params: {
   context: CanvasRenderingContext2D;
   area: PlotArea;
   plotArea: PlotArea;
-  buffer: CandleBuffer | undefined;
+  buffer: SeriesDataBuffer | undefined;
   visibleRange: IndexRange;
   textColor: string;
   borderColor: string;
@@ -59,7 +60,7 @@ export function renderTimeScale(params: {
 }
 
 export function getTimeScaleTicks(
-  buffer: CandleBuffer,
+  buffer: SeriesDataBuffer,
   visibleRange: IndexRange,
   plotArea: PlotArea,
   tickCount: number,
@@ -75,7 +76,7 @@ export function getTimeScaleTicks(
       visibleRange.to,
       visibleRange.from + Math.round(ratio * (visibleCount - 1)),
     );
-    const timestamp = buffer.time[index];
+    const timestamp = getSeriesBufferTimeAt(buffer, index);
 
     if (timestamp === undefined) {
       continue;

@@ -1,4 +1,5 @@
 import type { CandleBuffer } from "../../data/buffers/candle-buffer";
+import type { LineBuffer } from "../../data/buffers/line-buffer";
 import type { IndexRange } from "./time-scale";
 
 export interface PriceRange {
@@ -13,7 +14,7 @@ const DEFAULT_PRICE_RANGE: PriceRange = {
 
 export class PriceScaleModel {
   getVisiblePriceRange(
-    buffers: CandleBuffer[],
+    buffers: Array<CandleBuffer | LineBuffer>,
     visibleRange: IndexRange,
   ): PriceRange {
     let min = Number.POSITIVE_INFINITY;
@@ -28,6 +29,12 @@ export class PriceScaleModel {
       const to = Math.max(from, Math.min(visibleRange.to, buffer.length - 1));
 
       for (let index = from; index <= to; index += 1) {
+        if (isLineBuffer(buffer)) {
+          min = Math.min(min, buffer.value[index] ?? min);
+          max = Math.max(max, buffer.value[index] ?? max);
+          continue;
+        }
+
         min = Math.min(min, buffer.low[index] ?? min);
         max = Math.max(max, buffer.high[index] ?? max);
       }
@@ -53,4 +60,8 @@ export class PriceScaleModel {
       max: max + padding,
     };
   }
+}
+
+function isLineBuffer(buffer: CandleBuffer | LineBuffer): buffer is LineBuffer {
+  return "value" in buffer;
 }

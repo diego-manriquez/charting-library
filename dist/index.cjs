@@ -62,6 +62,11 @@ var PriceScaleModel = class {
       const from = Math.max(0, Math.min(visibleRange.from, buffer.length - 1));
       const to = Math.max(from, Math.min(visibleRange.to, buffer.length - 1));
       for (let index = from; index <= to; index += 1) {
+        if (isLineBuffer(buffer)) {
+          min = Math.min(min, buffer.value[index] ?? min);
+          max = Math.max(max, buffer.value[index] ?? max);
+          continue;
+        }
         min = Math.min(min, buffer.low[index] ?? min);
         max = Math.max(max, buffer.high[index] ?? max);
       }
@@ -84,6 +89,9 @@ var PriceScaleModel = class {
     };
   }
 };
+function isLineBuffer(buffer) {
+  return "value" in buffer;
+}
 
 // src/core/scales/time-scale.ts
 var MIN_VISIBLE_BARS = 10;
@@ -413,6 +421,45 @@ function getBufferValue(buffer, index) {
   return value;
 }
 
+// src/rendering/renderers/line-renderer.ts
+var DEFAULT_LINE_SERIES_OPTIONS = {
+  color: "#f59e0b",
+  lineWidth: 2
+};
+function resolveLineSeriesOptions(options) {
+  return {
+    color: options?.color ?? DEFAULT_LINE_SERIES_OPTIONS.color,
+    lineWidth: options?.lineWidth ?? DEFAULT_LINE_SERIES_OPTIONS.lineWidth
+  };
+}
+function renderLineSeries(params) {
+  const { context, buffer, options, visibleRange, priceRange, plotArea } = params;
+  if (buffer.length === 0 || plotArea.width <= 0 || plotArea.height <= 0) {
+    return;
+  }
+  context.strokeStyle = options.color;
+  context.lineWidth = options.lineWidth;
+  context.beginPath();
+  let hasStarted = false;
+  for (let index = visibleRange.from; index <= visibleRange.to; index += 1) {
+    const value = buffer.value[index];
+    if (value === void 0) {
+      continue;
+    }
+    const x = indexToX(index, visibleRange, plotArea);
+    const y = priceToY(value, priceRange, plotArea);
+    if (!hasStarted) {
+      context.moveTo(x, y);
+      hasStarted = true;
+      continue;
+    }
+    context.lineTo(x, y);
+  }
+  if (hasStarted) {
+    context.stroke();
+  }
+}
+
 // src/rendering/renderers/price-scale-renderer.ts
 function renderPriceScale(params) {
   const {
@@ -492,6 +539,14 @@ function normalizeTickValue(value) {
   return Number(value.toFixed(8));
 }
 
+// src/core/series/series-types.ts
+function getSeriesBufferLength(buffer) {
+  return buffer.length;
+}
+function getSeriesBufferTimeAt(buffer, index) {
+  return buffer.time[index];
+}
+
 // src/rendering/renderers/time-scale-renderer.ts
 function renderTimeScale(params) {
   const {
@@ -537,7 +592,7 @@ function getTimeScaleTicks(buffer, visibleRange, plotArea, tickCount) {
       visibleRange.to,
       visibleRange.from + Math.round(ratio * (visibleCount - 1))
     );
-    const timestamp = buffer.time[index];
+    const timestamp = getSeriesBufferTimeAt(buffer, index);
     if (timestamp === void 0) {
       continue;
     }
@@ -675,6 +730,81 @@ function validateCandle(candle, index, timestamp) {
   }
 }
 
+// src/data/adapters/line-data-adapter.ts
+function createLineBuffer(data) {
+  const length = data.length;
+  const time = new Float64Array(length);
+  const value = new Float64Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const point = data[index];
+    if (!point) {
+      throw new Error(`Missing line point at index ${index}.`);
+    }
+    const timestamp = normalizeTimestamp2(point.time);
+    validateLinePoint(point, index, timestamp);
+    time[index] = timestamp;
+    value[index] = point.value;
+  }
+  return {
+    time,
+    value,
+    length
+  };
+}
+function updateLineBuffer(buffer, data) {
+  const timestamp = normalizeTimestamp2(data.time);
+  validateLinePoint(data, buffer.length, timestamp);
+  if (buffer.length === 0) {
+    return createLineBuffer([data]);
+  }
+  const lastIndex = buffer.length - 1;
+  const lastTimestamp = buffer.time[lastIndex];
+  if (lastTimestamp === void 0) {
+    throw new Error("Missing last line point timestamp.");
+  }
+  if (timestamp < lastTimestamp) {
+    throw new Error("New line point time must be >= the last point time.");
+  }
+  if (timestamp === lastTimestamp) {
+    const nextBuffer2 = cloneBuffer2(buffer);
+    nextBuffer2.time[lastIndex] = timestamp;
+    nextBuffer2.value[lastIndex] = data.value;
+    return nextBuffer2;
+  }
+  const nextLength = buffer.length + 1;
+  const nextBuffer = {
+    time: copyWithExpandedCapacity2(buffer.time, nextLength),
+    value: copyWithExpandedCapacity2(buffer.value, nextLength),
+    length: nextLength
+  };
+  nextBuffer.time[nextLength - 1] = timestamp;
+  nextBuffer.value[nextLength - 1] = data.value;
+  return nextBuffer;
+}
+function validateLinePoint(point, index, timestamp) {
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`Invalid line point time at index ${index}.`);
+  }
+  if (!Number.isFinite(point.value)) {
+    throw new Error(`Invalid line point value at index ${index}.`);
+  }
+}
+function normalizeTimestamp2(time) {
+  return time instanceof Date ? time.getTime() : time;
+}
+function cloneBuffer2(buffer) {
+  return {
+    time: buffer.time.slice(),
+    value: buffer.value.slice(),
+    length: buffer.length
+  };
+}
+function copyWithExpandedCapacity2(source, nextLength) {
+  const next = new Float64Array(nextLength);
+  next.set(source);
+  return next;
+}
+
 // src/core/chart/chart-model.ts
 var PRICE_SCALE_WIDTH = 72;
 var TIME_SCALE_HEIGHT = 28;
@@ -737,8 +867,21 @@ var ChartModel = class {
     this.nextSeriesId += 1;
     this.series.set(id, {
       id,
+      type: "candlestick",
       options: resolveSeriesOptions(options),
       buffer: createCandleBuffer([])
+    });
+    this.render();
+    return id;
+  }
+  addLineSeries(options) {
+    const id = this.nextSeriesId;
+    this.nextSeriesId += 1;
+    this.series.set(id, {
+      id,
+      type: "line",
+      options: resolveLineSeriesOptions(options),
+      buffer: createLineBuffer([])
     });
     this.render();
     return id;
@@ -750,7 +893,7 @@ var ChartModel = class {
   }
   setSeriesData(seriesId, data) {
     const series = this.series.get(seriesId);
-    if (!series) {
+    if (!series || series.type !== "candlestick") {
       throw new Error(`Series ${seriesId} does not exist.`);
     }
     series.buffer = createCandleBuffer(data);
@@ -759,7 +902,7 @@ var ChartModel = class {
   }
   updateSeriesData(seriesId, data) {
     const series = this.series.get(seriesId);
-    if (!series) {
+    if (!series || series.type !== "candlestick") {
       throw new Error(`Series ${seriesId} does not exist.`);
     }
     const previousLength = series.buffer.length;
@@ -774,6 +917,30 @@ var ChartModel = class {
     if (lastTimestamp === void 0 || data.time !== lastTimestamp) {
       this.render();
       return;
+    }
+    this.render();
+  }
+  setLineSeriesData(seriesId, data) {
+    const series = this.series.get(seriesId);
+    if (!series || series.type !== "line") {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+    series.buffer = createLineBuffer(data);
+    this.fitContent();
+    this.render();
+  }
+  updateLineSeriesData(seriesId, data) {
+    const series = this.series.get(seriesId);
+    if (!series || series.type !== "line") {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+    const previousLength = series.buffer.length;
+    const wasFollowingLatest = this.timeScaleModel.isRightEdgeVisible(previousLength);
+    series.buffer = updateLineBuffer(series.buffer, data);
+    if (previousLength === 0) {
+      this.fitContent();
+    } else if (series.buffer.length > previousLength && wasFollowingLatest) {
+      this.timeScaleModel.pan(series.buffer.length, 1);
     }
     this.render();
   }
@@ -813,7 +980,18 @@ var ChartModel = class {
     drawBackground(context, this.size, this.options.backgroundColor);
     drawGrid(context, layout, this.options, priceScaleTicks);
     for (const series of this.series.values()) {
-      renderCandlesticks({
+      if (series.type === "candlestick") {
+        renderCandlesticks({
+          context,
+          buffer: series.buffer,
+          options: series.options,
+          visibleRange,
+          priceRange,
+          plotArea
+        });
+        continue;
+      }
+      renderLineSeries({
         context,
         buffer: series.buffer,
         options: series.options,
@@ -876,7 +1054,7 @@ var ChartModel = class {
   getMaxSeriesLength() {
     let maxLength = 0;
     for (const series of this.series.values()) {
-      maxLength = Math.max(maxLength, series.buffer.length);
+      maxLength = Math.max(maxLength, getSeriesBufferLength(series.buffer));
     }
     return maxLength;
   }
@@ -998,7 +1176,7 @@ var ChartModel = class {
     const x = clamp2(pointerX, plotArea.x, plotArea.x + plotArea.width);
     const y = clamp2(pointerY, plotArea.y, plotArea.y + plotArea.height);
     const dataIndex = xToIndex(x, visibleRange, plotArea);
-    const timestamp = primaryBuffer.time[dataIndex];
+    const timestamp = getSeriesBufferTimeAt(primaryBuffer, dataIndex);
     if (timestamp === void 0) {
       return;
     }
@@ -1040,7 +1218,7 @@ var ChartModel = class {
   }
   getPrimaryBuffer() {
     for (const series of this.series.values()) {
-      if (series.buffer.length > 0) {
+      if (getSeriesBufferLength(series.buffer) > 0) {
         return series.buffer;
       }
     }
@@ -1116,6 +1294,20 @@ var CandlestickSeriesApiImpl = class {
     this.chartModel.updateSeriesData(this.seriesId, data);
   }
 };
+var LineSeriesApiImpl = class {
+  constructor(chartModel, seriesId) {
+    this.chartModel = chartModel;
+    this.seriesId = seriesId;
+  }
+  chartModel;
+  seriesId;
+  setData(data) {
+    this.chartModel.setLineSeriesData(this.seriesId, data);
+  }
+  update(data) {
+    this.chartModel.updateLineSeriesData(this.seriesId, data);
+  }
+};
 var TimeScaleApiImpl = class {
   constructor(chartModel) {
     this.chartModel = chartModel;
@@ -1135,11 +1327,18 @@ var ChartApiImpl = class {
   timeScaleApi;
   seriesApiIds = /* @__PURE__ */ new WeakMap();
   addSeries(type, options) {
-    if (type !== "candlestick") {
-      throw new Error(`Unsupported series type: ${type}.`);
+    if (type === "candlestick") {
+      const seriesId2 = this.chartModel.addCandlestickSeries(
+        options
+      );
+      const api2 = new CandlestickSeriesApiImpl(this.chartModel, seriesId2);
+      this.seriesApiIds.set(api2, seriesId2);
+      return api2;
     }
-    const seriesId = this.chartModel.addCandlestickSeries(options);
-    const api = new CandlestickSeriesApiImpl(this.chartModel, seriesId);
+    const seriesId = this.chartModel.addLineSeries(
+      options
+    );
+    const api = new LineSeriesApiImpl(this.chartModel, seriesId);
     this.seriesApiIds.set(api, seriesId);
     return api;
   }

@@ -1,4 +1,4 @@
-export type SeriesType = "candlestick";
+export type SeriesType = "candlestick" | "line";
 
 export interface ChartPaddingOptions {
   top?: number;
@@ -31,6 +31,11 @@ export interface CandlestickSeriesOptions {
   bodySpacingRatio?: number;
 }
 
+export interface LineSeriesOptions {
+  color?: string;
+  lineWidth?: number;
+}
+
 export interface CandlestickData {
   time: number | Date;
   open: number;
@@ -40,9 +45,19 @@ export interface CandlestickData {
   volume?: number;
 }
 
+export interface LineData {
+  time: number | Date;
+  value: number;
+}
+
 export interface CandlestickSeriesApi {
   setData(data: CandlestickData[]): void;
   update(data: CandlestickData): void;
+}
+
+export interface LineSeriesApi {
+  setData(data: LineData[]): void;
+  update(data: LineData): void;
 }
 
 export interface TimeScaleApi {
@@ -54,7 +69,11 @@ export interface ChartApi {
     type: "candlestick",
     options?: CandlestickSeriesOptions,
   ): CandlestickSeriesApi;
-  removeSeries(series: CandlestickSeriesApi): void;
+  addSeries(
+    type: "line",
+    options?: LineSeriesOptions,
+  ): LineSeriesApi;
+  removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void;
   resize(width: number, height: number): void;
   timeScale(): TimeScaleApi;
   dispose(): void;
