@@ -1,8 +1,11 @@
 import type { PriceRange } from "../../core/scales/price-scale";
 import type { PlotArea } from "../common/geometry";
-import { formatPriceLabel } from "../common/chart-coordinates";
+import {
+  formatPriceLabel,
+  priceToY,
+} from "../common/chart-coordinates";
 
-interface PriceScaleTick {
+export interface PriceScaleTick {
   y: number;
   value: number;
 }
@@ -10,20 +13,18 @@ interface PriceScaleTick {
 export function renderPriceScale(params: {
   context: CanvasRenderingContext2D;
   area: PlotArea;
-  priceRange: PriceRange;
   textColor: string;
   borderColor: string;
   backgroundColor: string;
-  tickCount: number;
+  ticks: PriceScaleTick[];
 }): void {
   const {
     context,
     area,
-    priceRange,
     textColor,
     borderColor,
     backgroundColor,
-    tickCount,
+    ticks,
   } = params;
 
   if (area.width <= 0 || area.height <= 0) {
@@ -41,13 +42,13 @@ export function renderPriceScale(params: {
 
   context.fillStyle = textColor;
   context.font = "12px ui-sans-serif, system-ui, sans-serif";
-  context.textAlign = "right";
+  context.textAlign = "center";
   context.textBaseline = "middle";
 
-  for (const tick of getPriceScaleTicks(priceRange, area, tickCount)) {
+  for (const tick of ticks) {
     context.fillText(
       formatPriceLabel(tick.value),
-      area.x + area.width - 8,
+      area.x + area.width / 2,
       tick.y,
     );
   }
@@ -55,20 +56,62 @@ export function renderPriceScale(params: {
 
 export function getPriceScaleTicks(
   priceRange: PriceRange,
-  area: PlotArea,
+  plotArea: PlotArea,
   tickCount: number,
 ): PriceScaleTick[] {
-  const ticks: PriceScaleTick[] = [];
   const safeTickCount = Math.max(2, tickCount);
+  const approximateStep =
+    (priceRange.max - priceRange.min) / Math.max(1, safeTickCount - 1);
+  const step = getNiceStep(approximateStep);
+  let start = Math.ceil(priceRange.min / step) * step;
+  let end = Math.floor(priceRange.max / step) * step;
 
-  for (let index = 0; index < safeTickCount; index += 1) {
-    const ratio =
-      safeTickCount === 1 ? 0 : index / (safeTickCount - 1);
+  if (start > end) {
+    start = Math.floor(priceRange.min / step) * step;
+    end = Math.ceil(priceRange.max / step) * step;
+  }
+
+  const ticks: PriceScaleTick[] = [];
+
+  for (let value = end; value >= start - step * 0.5; value -= step) {
+    const normalizedValue = normalizeTickValue(value);
     ticks.push({
-      y: area.y + ratio * area.height,
-      value: priceRange.max - ratio * (priceRange.max - priceRange.min),
+      y: priceToY(normalizedValue, priceRange, plotArea),
+      value: normalizedValue,
+    });
+  }
+
+  if (ticks.length === 0) {
+    const mid = normalizeTickValue((priceRange.min + priceRange.max) / 2);
+    ticks.push({
+      y: priceToY(mid, priceRange, plotArea),
+      value: mid,
     });
   }
 
   return ticks;
+}
+
+function getNiceStep(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+
+  const exponent = Math.floor(Math.log10(value));
+  const fraction = value / 10 ** exponent;
+  let niceFraction = 10;
+
+  if (fraction < 1.5) {
+    niceFraction = 1;
+  } else if (fraction < 3) {
+    niceFraction = 2;
+  } else if (fraction < 7) {
+    niceFraction = 5;
+  }
+
+  return niceFraction * 10 ** exponent;
+}
+
+function normalizeTickValue(value: number): number {
+  return Number(value.toFixed(8));
 }

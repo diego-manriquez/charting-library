@@ -24,7 +24,7 @@ describe("chart coordinate helpers", () => {
   });
 
   it("formats labels for crosshair use", () => {
-    expect(formatPriceLabel(123.4)).toBe("123.4");
+    expect(formatPriceLabel(123.4)).toBe("123.400");
     expect(formatTimeLabel(Date.UTC(2024, 0, 5), 20)).toBe("01-05");
   });
 });

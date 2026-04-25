@@ -2,6 +2,8 @@ import type { PriceRange } from "../../core/scales/price-scale";
 import type { IndexRange } from "../../core/scales/time-scale";
 import type { PlotArea } from "./geometry";
 
+const PRICE_DECIMALS = 3;
+
 export function indexToX(
   index: number,
   visibleRange: IndexRange,
@@ -49,7 +51,7 @@ export function yToPrice(
 }
 
 export function formatPriceLabel(value: number): string {
-  return value.toFixed(value >= 100 ? 2 : 4).replace(/\.?0+$/, "");
+  return value.toFixed(PRICE_DECIMALS);
 }
 
 export function formatTimeLabel(timestamp: number, visibleCount: number): string {

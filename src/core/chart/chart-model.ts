@@ -12,7 +12,11 @@ import {
 import { getChartLayout } from "../../rendering/common/geometry";
 import { renderCrosshair, type CrosshairState } from "../../rendering/renderers/crosshair-renderer";
 import { renderCandlesticks, resolveSeriesOptions } from "../../rendering/renderers/candlestick-renderer";
-import { renderPriceScale } from "../../rendering/renderers/price-scale-renderer";
+import {
+  getPriceScaleTicks,
+  renderPriceScale,
+  type PriceScaleTick,
+} from "../../rendering/renderers/price-scale-renderer";
 import { renderTimeScale } from "../../rendering/renderers/time-scale-renderer";
 import { createCandleBuffer } from "../../data/adapters/candle-data-adapter";
 import type {
@@ -29,6 +33,8 @@ const TIME_SCALE_HEIGHT = 28;
 const AXIS_BACKGROUND = "#0f172a";
 const CROSSHAIR_LINE_COLOR = "rgba(226, 232, 240, 0.65)";
 const CROSSHAIR_LABEL_COLOR = "#1d4ed8";
+const ZOOM_IN_FACTOR = 0.85;
+const ZOOM_OUT_FACTOR = 1.15;
 
 interface CandlestickSeriesState {
   id: number;
@@ -45,17 +51,35 @@ export class ChartModel {
   private nextSeriesId = 1;
   private size: Size;
   private crosshair: CrosshairState | undefined;
+  private activePointerId: number | undefined;
+  private lastPanX: number | undefined;
   private resizeObserver: ResizeObserver | undefined;
   private readonly handlePointerMove = (event: PointerEvent): void => {
-    this.updateCrosshair(event);
+    this.handlePointerMoveEvent(event);
+  };
+  private readonly handlePointerDown = (event: PointerEvent): void => {
+    this.handlePointerDownEvent(event);
+  };
+  private readonly handlePointerUp = (event: PointerEvent): void => {
+    this.handlePointerUpEvent(event);
+  };
+  private readonly handlePointerCancel = (event: PointerEvent): void => {
+    this.handlePointerUpEvent(event);
   };
   private readonly handlePointerLeave = (): void => {
+    if (this.activePointerId !== undefined) {
+      return;
+    }
+
     if (!this.crosshair) {
       return;
     }
 
     this.crosshair = undefined;
     this.render();
+  };
+  private readonly handleWheel = (event: WheelEvent): void => {
+    this.handleWheelEvent(event);
   };
 
   constructor(
@@ -128,10 +152,6 @@ export class ChartModel {
     });
     const plotArea = layout.plotArea;
 
-    this.layerManager.clear();
-    drawBackground(context, this.size, this.options.backgroundColor);
-    drawGrid(context, layout, this.options);
-
     const buffers = Array.from(this.series.values(), (series) => series.buffer);
     const primaryBuffer = buffers.find((buffer) => buffer.length > 0);
     const maxLength = this.getMaxSeriesLength();
@@ -140,6 +160,15 @@ export class ChartModel {
       buffers,
       visibleRange,
     );
+    const priceScaleTicks = getPriceScaleTicks(
+      priceRange,
+      plotArea,
+      this.options.grid.horizontalLines + 1,
+    );
+
+    this.layerManager.clear();
+    drawBackground(context, this.size, this.options.backgroundColor);
+    drawGrid(context, layout, this.options, priceScaleTicks);
 
     for (const series of this.series.values()) {
       renderCandlesticks({
@@ -155,11 +184,10 @@ export class ChartModel {
     renderPriceScale({
       context,
       area: layout.priceScaleArea,
-      priceRange,
       textColor: this.options.textColor,
       borderColor: this.options.grid.color,
       backgroundColor: AXIS_BACKGROUND,
-      tickCount: this.options.grid.horizontalLines + 1,
+      ticks: priceScaleTicks,
     });
 
     renderTimeScale({
@@ -267,16 +295,89 @@ export class ChartModel {
   }
 
   private bindPointerEvents(): void {
+    this.container.addEventListener("pointerdown", this.handlePointerDown);
     this.container.addEventListener("pointermove", this.handlePointerMove);
+    this.container.addEventListener("pointerup", this.handlePointerUp);
+    this.container.addEventListener("pointercancel", this.handlePointerCancel);
     this.container.addEventListener("pointerleave", this.handlePointerLeave);
+    this.container.addEventListener("wheel", this.handleWheel, {
+      passive: false,
+    });
   }
 
   private unbindPointerEvents(): void {
+    this.container.removeEventListener("pointerdown", this.handlePointerDown);
     this.container.removeEventListener("pointermove", this.handlePointerMove);
+    this.container.removeEventListener("pointerup", this.handlePointerUp);
+    this.container.removeEventListener("pointercancel", this.handlePointerCancel);
     this.container.removeEventListener("pointerleave", this.handlePointerLeave);
+    this.container.removeEventListener("wheel", this.handleWheel);
   }
 
-  private updateCrosshair(event: PointerEvent): void {
+  private handlePointerMoveEvent(event: PointerEvent): void {
+    if (this.activePointerId === event.pointerId && this.lastPanX !== undefined) {
+      this.panFromPointer(event);
+    }
+
+    this.updateCrosshairFromClientPoint(event.clientX, event.clientY);
+  }
+
+  private handlePointerDownEvent(event: PointerEvent): void {
+    const layout = this.getLayout();
+    const rect = this.container.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+
+    if (!isPointInPlotArea(pointerX, pointerY, layout.plotArea)) {
+      return;
+    }
+
+    this.activePointerId = event.pointerId;
+    this.lastPanX = pointerX;
+    this.container.setPointerCapture?.(event.pointerId);
+    this.updateCrosshairFromClientPoint(event.clientX, event.clientY);
+  }
+
+  private handlePointerUpEvent(event: PointerEvent): void {
+    if (this.activePointerId !== event.pointerId) {
+      return;
+    }
+
+    this.activePointerId = undefined;
+    this.lastPanX = undefined;
+    this.container.releasePointerCapture?.(event.pointerId);
+  }
+
+  private handleWheelEvent(event: WheelEvent): void {
+    const primaryBuffer = this.getPrimaryBuffer();
+    const maxLength = this.getMaxSeriesLength();
+
+    if (!primaryBuffer || maxLength <= 0) {
+      return;
+    }
+
+    const layout = this.getLayout();
+    const rect = this.container.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+
+    if (!isPointInPlotArea(pointerX, pointerY, layout.plotArea)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const anchorRatio =
+      layout.plotArea.width <= 0
+        ? 0.5
+        : (pointerX - layout.plotArea.x) / layout.plotArea.width;
+    const scaleFactor = event.deltaY < 0 ? ZOOM_IN_FACTOR : ZOOM_OUT_FACTOR;
+
+    this.timeScaleModel.zoom(maxLength, anchorRatio, scaleFactor);
+    this.updateCrosshairFromClientPoint(event.clientX, event.clientY);
+  }
+
+  private updateCrosshairFromClientPoint(clientX: number, clientY: number): void {
     const primaryBuffer = this.getPrimaryBuffer();
     const maxLength = this.getMaxSeriesLength();
 
@@ -290,21 +391,13 @@ export class ChartModel {
       Array.from(this.series.values(), (series) => series.buffer),
       visibleRange,
     );
-    const layout = getChartLayout(this.size, this.options.padding, {
-      priceScaleWidth: PRICE_SCALE_WIDTH,
-      timeScaleHeight: TIME_SCALE_HEIGHT,
-    });
+    const layout = this.getLayout();
     const rect = this.container.getBoundingClientRect();
-    const pointerX = event.clientX - rect.left;
-    const pointerY = event.clientY - rect.top;
+    const pointerX = clientX - rect.left;
+    const pointerY = clientY - rect.top;
     const plotArea = layout.plotArea;
 
-    if (
-      pointerX < plotArea.x ||
-      pointerX > plotArea.x + plotArea.width ||
-      pointerY < plotArea.y ||
-      pointerY > plotArea.y + plotArea.height
-    ) {
+    if (!isPointInPlotArea(pointerX, pointerY, plotArea)) {
       this.handlePointerLeave();
       return;
     }
@@ -331,6 +424,39 @@ export class ChartModel {
     this.render();
   }
 
+  private panFromPointer(event: PointerEvent): void {
+    if (this.lastPanX === undefined) {
+      return;
+    }
+
+    const maxLength = this.getMaxSeriesLength();
+
+    if (maxLength <= 0) {
+      return;
+    }
+
+    const layout = this.getLayout();
+    const rect = this.container.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const deltaX = pointerX - this.lastPanX;
+    const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
+    const visibleCount = Math.max(1, visibleRange.to - visibleRange.from + 1);
+    const candleSpacing = layout.plotArea.width / visibleCount;
+
+    if (candleSpacing <= 0) {
+      return;
+    }
+
+    const deltaBars = -Math.round(deltaX / candleSpacing);
+
+    if (deltaBars === 0) {
+      return;
+    }
+
+    this.timeScaleModel.pan(maxLength, deltaBars);
+    this.lastPanX = pointerX;
+  }
+
   private getPrimaryBuffer(): CandleBuffer | undefined {
     for (const series of this.series.values()) {
       if (series.buffer.length > 0) {
@@ -339,6 +465,13 @@ export class ChartModel {
     }
 
     return undefined;
+  }
+
+  private getLayout(): ChartLayout {
+    return getChartLayout(this.size, this.options.padding, {
+      priceScaleWidth: PRICE_SCALE_WIDTH,
+      timeScaleHeight: TIME_SCALE_HEIGHT,
+    });
   }
 }
 
@@ -364,6 +497,7 @@ function drawGrid(
   context: CanvasRenderingContext2D,
   layout: ChartLayout,
   options: ResolvedChartOptions,
+  priceScaleTicks?: PriceScaleTick[],
 ): void {
   const plotArea = layout.plotArea;
 
@@ -374,15 +508,25 @@ function drawGrid(
   context.strokeStyle = options.grid.color;
   context.lineWidth = 1;
 
-  const horizontalStep = plotArea.height / options.grid.horizontalLines;
   const verticalStep = plotArea.width / options.grid.verticalLines;
 
-  for (let index = 0; index <= options.grid.horizontalLines; index += 1) {
-    const y = plotArea.y + index * horizontalStep;
-    context.beginPath();
-    context.moveTo(plotArea.x, y);
-    context.lineTo(plotArea.x + plotArea.width, y);
-    context.stroke();
+  if (priceScaleTicks && priceScaleTicks.length > 0) {
+    for (const tick of priceScaleTicks) {
+      context.beginPath();
+      context.moveTo(plotArea.x, tick.y);
+      context.lineTo(plotArea.x + plotArea.width, tick.y);
+      context.stroke();
+    }
+  } else {
+    const horizontalStep = plotArea.height / options.grid.horizontalLines;
+
+    for (let index = 0; index <= options.grid.horizontalLines; index += 1) {
+      const y = plotArea.y + index * horizontalStep;
+      context.beginPath();
+      context.moveTo(plotArea.x, y);
+      context.lineTo(plotArea.x + plotArea.width, y);
+      context.stroke();
+    }
   }
 
   for (let index = 0; index <= options.grid.verticalLines; index += 1) {
@@ -392,4 +536,13 @@ function drawGrid(
     context.lineTo(x, plotArea.y + plotArea.height);
     context.stroke();
   }
+}
+
+function isPointInPlotArea(x: number, y: number, plotArea: ChartLayout["plotArea"]): boolean {
+  return (
+    x >= plotArea.x &&
+    x <= plotArea.x + plotArea.width &&
+    y >= plotArea.y &&
+    y <= plotArea.y + plotArea.height
+  );
 }

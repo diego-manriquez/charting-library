@@ -17,4 +17,23 @@ describe("TimeScaleModel", () => {
 
     expect(timeScale.getVisibleRange(0)).toEqual({ from: 0, to: 0 });
   });
+
+  it("zooms around the provided anchor ratio", () => {
+    const timeScale = new TimeScaleModel();
+
+    timeScale.fitContent(100);
+    timeScale.zoom(100, 0.5, 0.5);
+
+    expect(timeScale.getVisibleRange(100)).toEqual({ from: 25, to: 74 });
+  });
+
+  it("pans the current visible window without changing its span", () => {
+    const timeScale = new TimeScaleModel();
+
+    timeScale.fitContent(100);
+    timeScale.zoom(100, 0.5, 0.5);
+    timeScale.pan(100, 10);
+
+    expect(timeScale.getVisibleRange(100)).toEqual({ from: 35, to: 84 });
+  });
 });
