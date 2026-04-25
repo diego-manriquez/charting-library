@@ -5,12 +5,13 @@ export interface CrosshairState {
   y: number;
   priceLabel: string;
   timeLabel: string;
+  horizontalArea: PlotArea;
+  priceScaleArea: PlotArea;
 }
 
 export function renderCrosshair(params: {
   context: CanvasRenderingContext2D;
-  plotArea: PlotArea;
-  priceScaleArea: PlotArea;
+  plotAreas: PlotArea[];
   timeScaleArea: PlotArea;
   state: CrosshairState;
   lineColor: string;
@@ -19,8 +20,7 @@ export function renderCrosshair(params: {
 }): void {
   const {
     context,
-    plotArea,
-    priceScaleArea,
+    plotAreas,
     timeScaleArea,
     state,
     lineColor,
@@ -33,18 +33,22 @@ export function renderCrosshair(params: {
   context.lineWidth = 1;
   context.setLineDash([4, 4]);
 
+  const verticalTop = plotAreas[0]?.y ?? state.horizontalArea.y;
+  const lastPlotArea = plotAreas[plotAreas.length - 1] ?? state.horizontalArea;
+  const verticalBottom = lastPlotArea.y + lastPlotArea.height;
+
   context.beginPath();
-  context.moveTo(state.x, plotArea.y);
-  context.lineTo(state.x, plotArea.y + plotArea.height);
-  context.moveTo(plotArea.x, state.y);
-  context.lineTo(plotArea.x + plotArea.width, state.y);
+  context.moveTo(state.x, verticalTop);
+  context.lineTo(state.x, verticalBottom);
+  context.moveTo(state.horizontalArea.x, state.y);
+  context.lineTo(state.horizontalArea.x + state.horizontalArea.width, state.y);
   context.stroke();
   context.setLineDash([]);
 
   drawAxisLabel({
     context,
-    area: priceScaleArea,
-    centerX: priceScaleArea.x + priceScaleArea.width / 2,
+    area: state.priceScaleArea,
+    centerX: state.priceScaleArea.x + state.priceScaleArea.width / 2,
     centerY: state.y,
     text: state.priceLabel,
     textColor,

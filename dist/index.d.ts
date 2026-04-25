@@ -1,4 +1,4 @@
-type SeriesType = "candlestick" | "line";
+type SeriesType = "candlestick" | "line" | "volume";
 type Unsubscribe = () => void;
 interface ChartPaddingOptions {
     top?: number;
@@ -31,6 +31,10 @@ interface LineSeriesOptions {
     color?: string;
     lineWidth?: number;
 }
+interface VolumeSeriesOptions {
+    color?: string;
+    barSpacingRatio?: number;
+}
 interface CandlestickData {
     time: number | Date;
     open: number;
@@ -43,6 +47,11 @@ interface LineData {
     time: number | Date;
     value: number;
 }
+interface VolumeData {
+    time: number | Date;
+    value: number;
+    color?: string;
+}
 interface CandlestickSeriesApi {
     setData(data: CandlestickData[]): void;
     update(data: CandlestickData): void;
@@ -50,6 +59,10 @@ interface CandlestickSeriesApi {
 interface LineSeriesApi {
     setData(data: LineData[]): void;
     update(data: LineData): void;
+}
+interface VolumeSeriesApi {
+    setData(data: VolumeData[]): void;
+    update(data: VolumeData): void;
 }
 interface CrosshairMoveEvent {
     point: {
@@ -69,7 +82,8 @@ interface TimeScaleApi {
 interface ChartApi {
     addSeries(type: "candlestick", options?: CandlestickSeriesOptions): CandlestickSeriesApi;
     addSeries(type: "line", options?: LineSeriesOptions): LineSeriesApi;
-    removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void;
+    addSeries(type: "volume", options?: VolumeSeriesOptions): VolumeSeriesApi;
+    removeSeries(series: CandlestickSeriesApi | LineSeriesApi | VolumeSeriesApi): void;
     resize(width: number, height: number): void;
     subscribeCrosshairMove(handler: (event: CrosshairMoveEvent) => void): Unsubscribe;
     subscribeVisibleRangeChange(handler: (range: VisibleRange | undefined) => void): Unsubscribe;
@@ -79,4 +93,4 @@ interface ChartApi {
 
 declare function createChart(container: HTMLElement, options?: ChartOptions): ChartApi;
 
-export { type CandlestickData, type CandlestickSeriesApi, type CandlestickSeriesOptions, type ChartApi, type ChartOptions, type CrosshairMoveEvent, type LineData, type LineSeriesApi, type LineSeriesOptions, type SeriesType, type TimeScaleApi, type Unsubscribe, type VisibleRange, createChart };
+export { type CandlestickData, type CandlestickSeriesApi, type CandlestickSeriesOptions, type ChartApi, type ChartOptions, type CrosshairMoveEvent, type LineData, type LineSeriesApi, type LineSeriesOptions, type SeriesType, type TimeScaleApi, type Unsubscribe, type VisibleRange, type VolumeData, type VolumeSeriesApi, type VolumeSeriesOptions, createChart };

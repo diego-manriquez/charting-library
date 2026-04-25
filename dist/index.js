@@ -136,6 +136,34 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(value, max));
 }
 
+// src/core/scales/volume-scale.ts
+var DEFAULT_VOLUME_RANGE = {
+  min: 0,
+  max: 1
+};
+var VolumeScaleModel = class {
+  getVisibleVolumeRange(buffers, visibleRange) {
+    let max = Number.NEGATIVE_INFINITY;
+    for (const buffer of buffers) {
+      if (buffer.length === 0) {
+        continue;
+      }
+      const from = Math.max(0, Math.min(visibleRange.from, buffer.length - 1));
+      const to = Math.max(from, Math.min(visibleRange.to, buffer.length - 1));
+      for (let index = from; index <= to; index += 1) {
+        max = Math.max(max, buffer.value[index] ?? max);
+      }
+    }
+    if (!Number.isFinite(max) || max <= 0) {
+      return DEFAULT_VOLUME_RANGE;
+    }
+    return {
+      min: 0,
+      max: max * 1.1
+    };
+  }
+};
+
 // src/rendering/canvas/canvas-layer-manager.ts
 var CanvasLayerManager = class {
   constructor(container) {
@@ -229,8 +257,12 @@ function getChartLayout(size, padding, scales) {
   const priceScaleWidth = Math.min(scales.priceScaleWidth, innerWidth);
   const timeScaleHeight = Math.min(scales.timeScaleHeight, innerHeight);
   const plotWidth = Math.max(0, innerWidth - priceScaleWidth);
-  const plotHeight = Math.max(0, innerHeight - timeScaleHeight);
-  return {
+  const contentHeight = Math.max(0, innerHeight - timeScaleHeight);
+  const paneGap = scales.secondaryPaneHeight !== void 0 ? Math.max(0, scales.paneGap ?? 0) : 0;
+  const secondaryPaneHeight = scales.secondaryPaneHeight ? Math.min(scales.secondaryPaneHeight, Math.max(0, contentHeight - paneGap)) : 0;
+  const plotHeight = Math.max(0, contentHeight - secondaryPaneHeight - paneGap);
+  const secondaryY = padding.top + plotHeight + paneGap;
+  const layout = {
     plotArea: {
       x: padding.left,
       y: padding.top,
@@ -245,19 +277,33 @@ function getChartLayout(size, padding, scales) {
     },
     timeScaleArea: {
       x: padding.left,
-      y: padding.top + plotHeight,
+      y: padding.top + plotHeight + paneGap + secondaryPaneHeight,
       width: plotWidth,
       height: timeScaleHeight
     }
   };
+  if (secondaryPaneHeight > 0) {
+    layout.secondaryPlotArea = {
+      x: padding.left,
+      y: secondaryY,
+      width: plotWidth,
+      height: secondaryPaneHeight
+    };
+    layout.secondaryPriceScaleArea = {
+      x: padding.left + plotWidth,
+      y: secondaryY,
+      width: priceScaleWidth,
+      height: secondaryPaneHeight
+    };
+  }
+  return layout;
 }
 
 // src/rendering/renderers/crosshair-renderer.ts
 function renderCrosshair(params) {
   const {
     context,
-    plotArea,
-    priceScaleArea,
+    plotAreas,
     timeScaleArea,
     state,
     lineColor,
@@ -268,17 +314,20 @@ function renderCrosshair(params) {
   context.strokeStyle = lineColor;
   context.lineWidth = 1;
   context.setLineDash([4, 4]);
+  const verticalTop = plotAreas[0]?.y ?? state.horizontalArea.y;
+  const lastPlotArea = plotAreas[plotAreas.length - 1] ?? state.horizontalArea;
+  const verticalBottom = lastPlotArea.y + lastPlotArea.height;
   context.beginPath();
-  context.moveTo(state.x, plotArea.y);
-  context.lineTo(state.x, plotArea.y + plotArea.height);
-  context.moveTo(plotArea.x, state.y);
-  context.lineTo(plotArea.x + plotArea.width, state.y);
+  context.moveTo(state.x, verticalTop);
+  context.lineTo(state.x, verticalBottom);
+  context.moveTo(state.horizontalArea.x, state.y);
+  context.lineTo(state.horizontalArea.x + state.horizontalArea.width, state.y);
   context.stroke();
   context.setLineDash([]);
   drawAxisLabel({
     context,
-    area: priceScaleArea,
-    centerX: priceScaleArea.x + priceScaleArea.width / 2,
+    area: state.priceScaleArea,
+    centerX: state.priceScaleArea.x + state.priceScaleArea.width / 2,
     centerY: state.y,
     text: state.priceLabel,
     textColor,
@@ -431,6 +480,42 @@ function renderLineSeries(params) {
   }
   if (hasStarted) {
     context.stroke();
+  }
+}
+
+// src/rendering/renderers/volume-renderer.ts
+var DEFAULT_VOLUME_SERIES_OPTIONS = {
+  color: "rgba(59, 130, 246, 0.45)",
+  barSpacingRatio: 0.72
+};
+function resolveVolumeSeriesOptions(options) {
+  return {
+    color: options?.color ?? DEFAULT_VOLUME_SERIES_OPTIONS.color,
+    barSpacingRatio: options?.barSpacingRatio ?? DEFAULT_VOLUME_SERIES_OPTIONS.barSpacingRatio
+  };
+}
+function renderVolumeSeries(params) {
+  const { context, buffer, options, visibleRange, valueRange, plotArea } = params;
+  if (buffer.length === 0 || plotArea.width <= 0 || plotArea.height <= 0) {
+    return;
+  }
+  const visibleCount = Math.max(1, visibleRange.to - visibleRange.from + 1);
+  const barSpacing = plotArea.width / visibleCount;
+  const barWidth = Math.max(
+    1,
+    Math.min(16, barSpacing * options.barSpacingRatio)
+  );
+  const baseY = plotArea.y + plotArea.height;
+  for (let index = visibleRange.from; index <= visibleRange.to; index += 1) {
+    const value = buffer.value[index];
+    if (value === void 0) {
+      continue;
+    }
+    const x = indexToX(index, visibleRange, plotArea);
+    const y = priceToY(value, valueRange, plotArea);
+    const color = buffer.color[index] ?? options.color;
+    context.fillStyle = color;
+    context.fillRect(x - barWidth / 2, y, barWidth, Math.max(1, baseY - y));
   }
 }
 
@@ -779,6 +864,88 @@ function copyWithExpandedCapacity2(source, nextLength) {
   return next;
 }
 
+// src/data/adapters/volume-data-adapter.ts
+function createVolumeBuffer(data) {
+  const length = data.length;
+  const time = new Float64Array(length);
+  const value = new Float64Array(length);
+  const color = new Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const point = data[index];
+    if (!point) {
+      throw new Error(`Missing volume point at index ${index}.`);
+    }
+    const timestamp = normalizeTimestamp3(point.time);
+    validateVolumePoint(point, index, timestamp);
+    time[index] = timestamp;
+    value[index] = point.value;
+    color[index] = point.color;
+  }
+  return {
+    time,
+    value,
+    color,
+    length
+  };
+}
+function updateVolumeBuffer(buffer, data) {
+  const timestamp = normalizeTimestamp3(data.time);
+  validateVolumePoint(data, buffer.length, timestamp);
+  if (buffer.length === 0) {
+    return createVolumeBuffer([data]);
+  }
+  const lastIndex = buffer.length - 1;
+  const lastTimestamp = buffer.time[lastIndex];
+  if (lastTimestamp === void 0) {
+    throw new Error("Missing last volume point timestamp.");
+  }
+  if (timestamp < lastTimestamp) {
+    throw new Error("New volume point time must be >= the last point time.");
+  }
+  if (timestamp === lastTimestamp) {
+    const nextBuffer2 = cloneBuffer3(buffer);
+    nextBuffer2.time[lastIndex] = timestamp;
+    nextBuffer2.value[lastIndex] = data.value;
+    nextBuffer2.color[lastIndex] = data.color;
+    return nextBuffer2;
+  }
+  const nextLength = buffer.length + 1;
+  const nextBuffer = {
+    time: copyWithExpandedCapacity3(buffer.time, nextLength),
+    value: copyWithExpandedCapacity3(buffer.value, nextLength),
+    color: buffer.color.slice(),
+    length: nextLength
+  };
+  nextBuffer.time[nextLength - 1] = timestamp;
+  nextBuffer.value[nextLength - 1] = data.value;
+  nextBuffer.color[nextLength - 1] = data.color;
+  return nextBuffer;
+}
+function validateVolumePoint(point, index, timestamp) {
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`Invalid volume point time at index ${index}.`);
+  }
+  if (!Number.isFinite(point.value) || point.value < 0) {
+    throw new Error(`Invalid volume point value at index ${index}.`);
+  }
+}
+function normalizeTimestamp3(time) {
+  return time instanceof Date ? time.getTime() : time;
+}
+function cloneBuffer3(buffer) {
+  return {
+    time: buffer.time.slice(),
+    value: buffer.value.slice(),
+    color: buffer.color.slice(),
+    length: buffer.length
+  };
+}
+function copyWithExpandedCapacity3(source, nextLength) {
+  const next = new Float64Array(nextLength);
+  next.set(source);
+  return next;
+}
+
 // src/core/events/event-emitter.ts
 var EventEmitter = class {
   listeners = /* @__PURE__ */ new Set();
@@ -806,6 +973,8 @@ var CROSSHAIR_LINE_COLOR = "rgba(226, 232, 240, 0.65)";
 var CROSSHAIR_LABEL_COLOR = "#1d4ed8";
 var ZOOM_IN_FACTOR = 0.85;
 var ZOOM_OUT_FACTOR = 1.15;
+var SECONDARY_PANE_GAP = 8;
+var VOLUME_PANE_HEIGHT = 104;
 var ChartModel = class {
   constructor(container, options) {
     this.container = container;
@@ -822,6 +991,7 @@ var ChartModel = class {
   options;
   timeScaleModel = new TimeScaleModel();
   priceScaleModel = new PriceScaleModel();
+  volumeScaleModel = new VolumeScaleModel();
   layerManager;
   series = /* @__PURE__ */ new Map();
   crosshairMoveEmitter = new EventEmitter();
@@ -887,6 +1057,18 @@ var ChartModel = class {
     this.render();
     return id;
   }
+  addVolumeSeries(options) {
+    const id = this.nextSeriesId;
+    this.nextSeriesId += 1;
+    this.series.set(id, {
+      id,
+      type: "volume",
+      options: resolveVolumeSeriesOptions(options),
+      buffer: createVolumeBuffer([])
+    });
+    this.render();
+    return id;
+  }
   removeSeries(seriesId) {
     this.series.delete(seriesId);
     this.fitContent();
@@ -945,6 +1127,30 @@ var ChartModel = class {
     }
     this.render();
   }
+  setVolumeSeriesData(seriesId, data) {
+    const series = this.series.get(seriesId);
+    if (!series || series.type !== "volume") {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+    series.buffer = createVolumeBuffer(data);
+    this.fitContent();
+    this.render();
+  }
+  updateVolumeSeriesData(seriesId, data) {
+    const series = this.series.get(seriesId);
+    if (!series || series.type !== "volume") {
+      throw new Error(`Series ${seriesId} does not exist.`);
+    }
+    const previousLength = series.buffer.length;
+    const wasFollowingLatest = this.timeScaleModel.isRightEdgeVisible(previousLength);
+    series.buffer = updateVolumeBuffer(series.buffer, data);
+    if (previousLength === 0) {
+      this.fitContent();
+    } else if (series.buffer.length > previousLength && wasFollowingLatest) {
+      this.timeScaleModel.pan(series.buffer.length, 1);
+    }
+    this.render();
+  }
   fitContent() {
     const maxLength = this.getMaxSeriesLength();
     this.timeScaleModel.fitContent(maxLength);
@@ -964,29 +1170,38 @@ var ChartModel = class {
     return this.visibleRangeEmitter.subscribe(handler);
   }
   render() {
+    const hasSecondaryPane = this.hasVolumeSeries();
     const context = this.layerManager.getContext();
-    const layout = getChartLayout(this.size, this.options.padding, {
-      priceScaleWidth: PRICE_SCALE_WIDTH,
-      timeScaleHeight: TIME_SCALE_HEIGHT
-    });
+    const layout = getChartLayout(
+      this.size,
+      this.options.padding,
+      getLayoutOptions(hasSecondaryPane)
+    );
     const plotArea = layout.plotArea;
+    const mainSeries = this.getMainSeries();
+    const volumeSeries = this.getVolumeSeries();
     const buffers = Array.from(this.series.values(), (series) => series.buffer);
     const primaryBuffer = buffers.find((buffer) => buffer.length > 0);
     const maxLength = this.getMaxSeriesLength();
     const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
     const priceRange = this.priceScaleModel.getVisiblePriceRange(
-      buffers,
+      mainSeries.map((series) => series.buffer),
       visibleRange
     );
+    const volumeRange = layout.secondaryPlotArea && layout.secondaryPriceScaleArea ? this.volumeScaleModel.getVisibleVolumeRange(
+      volumeSeries.map((series) => series.buffer),
+      visibleRange
+    ) : void 0;
     const priceScaleTicks = getPriceScaleTicks(
       priceRange,
       plotArea,
       this.options.grid.horizontalLines + 1
     );
+    const volumeScaleTicks = volumeRange && layout.secondaryPlotArea ? getPriceScaleTicks(volumeRange, layout.secondaryPlotArea, 3) : void 0;
     this.layerManager.clear();
     drawBackground(context, this.size, this.options.backgroundColor);
-    drawGrid(context, layout, this.options, priceScaleTicks);
-    for (const series of this.series.values()) {
+    drawGrid(context, layout, this.options, priceScaleTicks, volumeScaleTicks);
+    for (const series of mainSeries) {
       if (series.type === "candlestick") {
         renderCandlesticks({
           context,
@@ -1007,6 +1222,18 @@ var ChartModel = class {
         plotArea
       });
     }
+    if (layout.secondaryPlotArea && volumeRange) {
+      for (const series of volumeSeries) {
+        renderVolumeSeries({
+          context,
+          buffer: series.buffer,
+          options: series.options,
+          visibleRange,
+          valueRange: volumeRange,
+          plotArea: layout.secondaryPlotArea
+        });
+      }
+    }
     renderPriceScale({
       context,
       area: layout.priceScaleArea,
@@ -1015,6 +1242,16 @@ var ChartModel = class {
       backgroundColor: AXIS_BACKGROUND,
       ticks: priceScaleTicks
     });
+    if (layout.secondaryPriceScaleArea && volumeScaleTicks) {
+      renderPriceScale({
+        context,
+        area: layout.secondaryPriceScaleArea,
+        textColor: this.options.textColor,
+        borderColor: this.options.grid.color,
+        backgroundColor: AXIS_BACKGROUND,
+        ticks: volumeScaleTicks
+      });
+    }
     renderTimeScale({
       context,
       area: layout.timeScaleArea,
@@ -1030,8 +1267,7 @@ var ChartModel = class {
     if (this.crosshair) {
       renderCrosshair({
         context,
-        plotArea,
-        priceScaleArea: layout.priceScaleArea,
+        plotAreas: layout.secondaryPlotArea ? [layout.plotArea, layout.secondaryPlotArea] : [layout.plotArea],
         timeScaleArea: layout.timeScaleArea,
         state: this.crosshair,
         lineColor: CROSSHAIR_LINE_COLOR,
@@ -1127,7 +1363,7 @@ var ChartModel = class {
     const rect = this.container.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
-    if (!isPointInPlotArea(pointerX, pointerY, layout.plotArea)) {
+    if (!isPointInInteractivePlotArea(pointerX, pointerY, layout)) {
       return;
     }
     this.activePointerId = event.pointerId;
@@ -1153,7 +1389,7 @@ var ChartModel = class {
     const rect = this.container.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
-    if (!isPointInPlotArea(pointerX, pointerY, layout.plotArea)) {
+    if (!isPointInInteractivePlotArea(pointerX, pointerY, layout)) {
       return;
     }
     event.preventDefault();
@@ -1170,39 +1406,53 @@ var ChartModel = class {
       return;
     }
     const visibleRange = this.timeScaleModel.getVisibleRange(maxLength);
+    const mainSeries = this.getMainSeries();
+    const volumeSeries = this.getVolumeSeries();
     const priceRange = this.priceScaleModel.getVisiblePriceRange(
-      Array.from(this.series.values(), (series) => series.buffer),
+      mainSeries.map((series) => series.buffer),
       visibleRange
     );
     const layout = this.getLayout();
+    const volumeRange = layout.secondaryPlotArea && layout.secondaryPriceScaleArea ? this.volumeScaleModel.getVisibleVolumeRange(
+      volumeSeries.map((series) => series.buffer),
+      visibleRange
+    ) : void 0;
     const rect = this.container.getBoundingClientRect();
     const pointerX = clientX - rect.left;
     const pointerY = clientY - rect.top;
-    const plotArea = layout.plotArea;
-    if (!isPointInPlotArea(pointerX, pointerY, plotArea)) {
+    const activePlotArea = getActivePlotArea(layout, pointerX, pointerY);
+    if (!activePlotArea) {
       this.handlePointerLeave();
       return;
     }
-    const x = clamp2(pointerX, plotArea.x, plotArea.x + plotArea.width);
-    const y = clamp2(pointerY, plotArea.y, plotArea.y + plotArea.height);
-    const dataIndex = xToIndex(x, visibleRange, plotArea);
+    const x = clamp2(pointerX, layout.plotArea.x, layout.plotArea.x + layout.plotArea.width);
+    const y = clamp2(
+      pointerY,
+      activePlotArea.plotArea.y,
+      activePlotArea.plotArea.y + activePlotArea.plotArea.height
+    );
+    const dataIndex = xToIndex(x, visibleRange, layout.plotArea);
     const timestamp = getSeriesBufferTimeAt(primaryBuffer, dataIndex);
     if (timestamp === void 0) {
       return;
     }
+    const activeRange = activePlotArea.kind === "secondary" && volumeRange ? volumeRange : priceRange;
+    const activeValue = yToPrice(y, activeRange, activePlotArea.plotArea);
     this.crosshair = {
       x,
       y,
-      priceLabel: formatPriceLabel(yToPrice(y, priceRange, plotArea)),
+      priceLabel: formatPriceLabel(activeValue),
       timeLabel: formatTimeLabel(
         timestamp,
         Math.max(1, visibleRange.to - visibleRange.from + 1)
-      )
+      ),
+      horizontalArea: activePlotArea.plotArea,
+      priceScaleArea: activePlotArea.priceScaleArea
     };
     this.crosshairMoveEmitter.emit({
       point: { x, y },
       time: timestamp,
-      price: yToPrice(y, priceRange, plotArea)
+      price: activeValue
     });
     this.render();
   }
@@ -1240,10 +1490,25 @@ var ChartModel = class {
     return void 0;
   }
   getLayout() {
-    return getChartLayout(this.size, this.options.padding, {
-      priceScaleWidth: PRICE_SCALE_WIDTH,
-      timeScaleHeight: TIME_SCALE_HEIGHT
-    });
+    const hasSecondaryPane = this.hasVolumeSeries();
+    return getChartLayout(
+      this.size,
+      this.options.padding,
+      getLayoutOptions(hasSecondaryPane)
+    );
+  }
+  getMainSeries() {
+    return Array.from(this.series.values()).filter(
+      (series) => series.type !== "volume"
+    );
+  }
+  getVolumeSeries() {
+    return Array.from(this.series.values()).filter(
+      (series) => series.type === "volume"
+    );
+  }
+  hasVolumeSeries() {
+    return this.getVolumeSeries().length > 0;
   }
   emitVisibleRangeIfChanged(visibleRange, maxLength) {
     const nextRange = maxLength > 0 ? visibleRange : void 0;
@@ -1265,7 +1530,7 @@ function drawBackground(context, size, color) {
   context.fillStyle = color;
   context.fillRect(0, 0, size.width, size.height);
 }
-function drawGrid(context, layout, options, priceScaleTicks) {
+function drawGrid(context, layout, options, priceScaleTicks, secondaryTicks) {
   const plotArea = layout.plotArea;
   if (!options.grid.visible || plotArea.width <= 0 || plotArea.height <= 0) {
     return;
@@ -1294,12 +1559,60 @@ function drawGrid(context, layout, options, priceScaleTicks) {
     const x = plotArea.x + index * verticalStep;
     context.beginPath();
     context.moveTo(x, plotArea.y);
-    context.lineTo(x, plotArea.y + plotArea.height);
+    context.lineTo(
+      x,
+      layout.secondaryPlotArea ? layout.secondaryPlotArea.y + layout.secondaryPlotArea.height : plotArea.y + plotArea.height
+    );
+    context.stroke();
+  }
+  if (layout.secondaryPlotArea) {
+    if (secondaryTicks) {
+      for (const tick of secondaryTicks) {
+        context.beginPath();
+        context.moveTo(layout.secondaryPlotArea.x, tick.y);
+        context.lineTo(
+          layout.secondaryPlotArea.x + layout.secondaryPlotArea.width,
+          tick.y
+        );
+        context.stroke();
+      }
+    }
+    context.beginPath();
+    context.moveTo(layout.secondaryPlotArea.x, layout.secondaryPlotArea.y - 4);
+    context.lineTo(
+      layout.secondaryPlotArea.x + layout.secondaryPlotArea.width,
+      layout.secondaryPlotArea.y - 4
+    );
     context.stroke();
   }
 }
 function isPointInPlotArea(x, y, plotArea) {
   return x >= plotArea.x && x <= plotArea.x + plotArea.width && y >= plotArea.y && y <= plotArea.y + plotArea.height;
+}
+function isPointInInteractivePlotArea(x, y, layout) {
+  if (isPointInPlotArea(x, y, layout.plotArea)) {
+    return true;
+  }
+  return layout.secondaryPlotArea ? isPointInPlotArea(x, y, layout.secondaryPlotArea) : false;
+}
+function getActivePlotArea(layout, x, y) {
+  if (layout.secondaryPlotArea && layout.secondaryPriceScaleArea) {
+    if (isPointInPlotArea(x, y, layout.secondaryPlotArea)) {
+      return {
+        kind: "secondary",
+        plotArea: layout.secondaryPlotArea,
+        priceScaleArea: layout.secondaryPriceScaleArea
+      };
+    }
+  }
+  if (isPointInPlotArea(x, y, layout.plotArea)) {
+    return {
+      kind: "main",
+      plotArea: layout.plotArea,
+      priceScaleArea: layout.priceScaleArea
+    };
+  }
+  return void 0;
 }
 function areVisibleRangesEqual(left, right) {
   if (!left && !right) {
@@ -1309,6 +1622,20 @@ function areVisibleRangesEqual(left, right) {
     return false;
   }
   return left.from === right.from && left.to === right.to;
+}
+function getLayoutOptions(hasSecondaryPane) {
+  if (!hasSecondaryPane) {
+    return {
+      priceScaleWidth: PRICE_SCALE_WIDTH,
+      timeScaleHeight: TIME_SCALE_HEIGHT
+    };
+  }
+  return {
+    priceScaleWidth: PRICE_SCALE_WIDTH,
+    timeScaleHeight: TIME_SCALE_HEIGHT,
+    secondaryPaneHeight: VOLUME_PANE_HEIGHT,
+    paneGap: SECONDARY_PANE_GAP
+  };
 }
 
 // src/public-api/create-chart.ts
@@ -1340,6 +1667,20 @@ var LineSeriesApiImpl = class {
     this.chartModel.updateLineSeriesData(this.seriesId, data);
   }
 };
+var VolumeSeriesApiImpl = class {
+  constructor(chartModel, seriesId) {
+    this.chartModel = chartModel;
+    this.seriesId = seriesId;
+  }
+  chartModel;
+  seriesId;
+  setData(data) {
+    this.chartModel.setVolumeSeriesData(this.seriesId, data);
+  }
+  update(data) {
+    this.chartModel.updateVolumeSeriesData(this.seriesId, data);
+  }
+};
 var TimeScaleApiImpl = class {
   constructor(chartModel) {
     this.chartModel = chartModel;
@@ -1364,6 +1705,14 @@ var ChartApiImpl = class {
         options
       );
       const api2 = new CandlestickSeriesApiImpl(this.chartModel, seriesId2);
+      this.seriesApiIds.set(api2, seriesId2);
+      return api2;
+    }
+    if (type === "volume") {
+      const seriesId2 = this.chartModel.addVolumeSeries(
+        options
+      );
+      const api2 = new VolumeSeriesApiImpl(this.chartModel, seriesId2);
       this.seriesApiIds.set(api2, seriesId2);
       return api2;
     }

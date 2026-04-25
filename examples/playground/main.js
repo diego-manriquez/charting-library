@@ -28,15 +28,27 @@ const closeLine = chart.addSeries("line", {
   color: "#fbbf24",
   lineWidth: 2,
 });
+const volumeSeries = chart.addSeries("volume", {
+  color: "rgba(96, 165, 250, 0.4)",
+  barSpacingRatio: 0.68,
+});
 
 const initialCandles = generateCandles(120);
 const initialLine = initialCandles.map((candle) => ({
   time: candle.time,
   value: candle.close,
 }));
+const initialVolume = initialCandles.map((candle) => ({
+  time: candle.time,
+  value: candle.volume ?? 0,
+  color: candle.close >= candle.open
+    ? "rgba(16, 185, 129, 0.38)"
+    : "rgba(244, 63, 94, 0.38)",
+}));
 
 candles.setData(initialCandles);
 closeLine.setData(initialLine);
+volumeSeries.setData(initialVolume);
 chart.timeScale().fitContent();
 chart.resize(container.clientWidth, container.clientHeight);
 
@@ -77,6 +89,13 @@ setInterval(() => {
       time: liveCandle.time,
       value: liveCandle.close,
     });
+    volumeSeries.update({
+      time: liveCandle.time,
+      value: liveCandle.volume,
+      color: liveCandle.close >= liveCandle.open
+        ? "rgba(16, 185, 129, 0.38)"
+        : "rgba(244, 63, 94, 0.38)",
+    });
     phase += 1;
     return;
   }
@@ -85,6 +104,13 @@ setInterval(() => {
   closeLine.update({
     time: liveCandle.time,
     value: liveCandle.close,
+  });
+  volumeSeries.update({
+    time: liveCandle.time,
+    value: liveCandle.volume,
+    color: liveCandle.close >= liveCandle.open
+      ? "rgba(16, 185, 129, 0.38)"
+      : "rgba(244, 63, 94, 0.38)",
   });
   liveIndex += 1;
   liveCandle = generateNextCandle();

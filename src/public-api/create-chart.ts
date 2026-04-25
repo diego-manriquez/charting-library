@@ -13,6 +13,9 @@ import type {
   TimeScaleApi,
   Unsubscribe,
   VisibleRange,
+  VolumeData,
+  VolumeSeriesApi,
+  VolumeSeriesOptions,
 } from "./types";
 
 class CandlestickSeriesApiImpl implements CandlestickSeriesApi {
@@ -45,6 +48,21 @@ class LineSeriesApiImpl implements LineSeriesApi {
   }
 }
 
+class VolumeSeriesApiImpl implements VolumeSeriesApi {
+  constructor(
+    private readonly chartModel: ChartModel,
+    private readonly seriesId: number,
+  ) {}
+
+  setData(data: VolumeData[]): void {
+    this.chartModel.setVolumeSeriesData(this.seriesId, data);
+  }
+
+  update(data: VolumeData): void {
+    this.chartModel.updateVolumeSeriesData(this.seriesId, data);
+  }
+}
+
 class TimeScaleApiImpl implements TimeScaleApi {
   constructor(private readonly chartModel: ChartModel) {}
 
@@ -57,7 +75,7 @@ class TimeScaleApiImpl implements TimeScaleApi {
 class ChartApiImpl implements ChartApi {
   private readonly timeScaleApi: TimeScaleApi;
   private readonly seriesApiIds = new WeakMap<
-    CandlestickSeriesApi | LineSeriesApi,
+    CandlestickSeriesApi | LineSeriesApi | VolumeSeriesApi,
     number
   >();
 
@@ -74,14 +92,31 @@ class ChartApiImpl implements ChartApi {
     options?: LineSeriesOptions,
   ): LineSeriesApi;
   addSeries(
+    type: "volume",
+    options?: VolumeSeriesOptions,
+  ): VolumeSeriesApi;
+  addSeries(
     type: SeriesType,
-    options?: CandlestickSeriesOptions | LineSeriesOptions,
-  ): CandlestickSeriesApi | LineSeriesApi {
+    options?:
+      | CandlestickSeriesOptions
+      | LineSeriesOptions
+      | VolumeSeriesOptions,
+  ): CandlestickSeriesApi | LineSeriesApi | VolumeSeriesApi {
     if (type === "candlestick") {
       const seriesId = this.chartModel.addCandlestickSeries(
         options as CandlestickSeriesOptions | undefined,
       );
       const api = new CandlestickSeriesApiImpl(this.chartModel, seriesId);
+      this.seriesApiIds.set(api, seriesId);
+
+      return api;
+    }
+
+    if (type === "volume") {
+      const seriesId = this.chartModel.addVolumeSeries(
+        options as VolumeSeriesOptions | undefined,
+      );
+      const api = new VolumeSeriesApiImpl(this.chartModel, seriesId);
       this.seriesApiIds.set(api, seriesId);
 
       return api;
@@ -96,7 +131,9 @@ class ChartApiImpl implements ChartApi {
     return api;
   }
 
-  removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void {
+  removeSeries(
+    series: CandlestickSeriesApi | LineSeriesApi | VolumeSeriesApi,
+  ): void {
     const seriesId = this.seriesApiIds.get(series);
 
     if (seriesId === undefined) {

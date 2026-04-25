@@ -1,4 +1,4 @@
-export type SeriesType = "candlestick" | "line";
+export type SeriesType = "candlestick" | "line" | "volume";
 export type Unsubscribe = () => void;
 
 export interface ChartPaddingOptions {
@@ -37,6 +37,11 @@ export interface LineSeriesOptions {
   lineWidth?: number;
 }
 
+export interface VolumeSeriesOptions {
+  color?: string;
+  barSpacingRatio?: number;
+}
+
 export interface CandlestickData {
   time: number | Date;
   open: number;
@@ -51,6 +56,12 @@ export interface LineData {
   value: number;
 }
 
+export interface VolumeData {
+  time: number | Date;
+  value: number;
+  color?: string;
+}
+
 export interface CandlestickSeriesApi {
   setData(data: CandlestickData[]): void;
   update(data: CandlestickData): void;
@@ -59,6 +70,11 @@ export interface CandlestickSeriesApi {
 export interface LineSeriesApi {
   setData(data: LineData[]): void;
   update(data: LineData): void;
+}
+
+export interface VolumeSeriesApi {
+  setData(data: VolumeData[]): void;
+  update(data: VolumeData): void;
 }
 
 export interface CrosshairMoveEvent {
@@ -85,7 +101,13 @@ export interface ChartApi {
     type: "line",
     options?: LineSeriesOptions,
   ): LineSeriesApi;
-  removeSeries(series: CandlestickSeriesApi | LineSeriesApi): void;
+  addSeries(
+    type: "volume",
+    options?: VolumeSeriesOptions,
+  ): VolumeSeriesApi;
+  removeSeries(
+    series: CandlestickSeriesApi | LineSeriesApi | VolumeSeriesApi,
+  ): void;
   resize(width: number, height: number): void;
   subscribeCrosshairMove(
     handler: (event: CrosshairMoveEvent) => void,

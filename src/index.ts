@@ -13,4 +13,7 @@ export type {
   TimeScaleApi,
   Unsubscribe,
   VisibleRange,
+  VolumeData,
+  VolumeSeriesApi,
+  VolumeSeriesOptions,
 } from "./public-api/types";
